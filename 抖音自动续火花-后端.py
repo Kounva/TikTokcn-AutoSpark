@@ -40,8 +40,8 @@ def save_config(cfg):
     try:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f'⚠️ 配置保存失败: {e}')
 
 def is_port_in_use(port):
     """检测端口是否被占用"""
@@ -66,9 +66,8 @@ options = webdriver.EdgeOptions()
 # 默认显示浏览器（无头模式不稳定易崩溃），可通过设置页修改
 off_ui = not config.get('show_browser', True)
 
-import tempfile
-# Edge 临时用户数据目录（用系统临时目录，程序退出后由系统清理）
-APP_PROFILE_DIR = tempfile.mkdtemp(prefix='edge_spark_')
+# Edge 固定用户数据目录（保持浏览器指纹一致，避免每次启动被视为新设备）
+APP_PROFILE_DIR = os.path.join(BASE_DIR, 'edge_user_data')
 
 
 def unban_config():
@@ -93,32 +92,16 @@ def unban_config():
 
 
 def AiqingGongyu_text():
-    req = requests.get('https://v2.xxapi.cn/api/aiqinggongyu')
-    if req.status_code == 200:
-        json_data = req.json()
-        json_data = json_data['data']
-        if json_data:
-            return json_data
-        else:
-            return '暂无今日名言'
-    else:
+    try:
+        req = requests.get('https://v2.xxapi.cn/api/aiqinggongyu', timeout=5)
+        if req.status_code == 200:
+            json_data = req.json()
+            json_data = json_data['data']
+            if json_data:
+                return json_data
         return '暂无今日名言'
-
-
-def Get_Cooke():
-    driver.get('https://www.douyin.com/')
-    for_OFF = True
-    print('🕰️ 请登录抖音[且保持游览器为全屏!].....')
-    while for_OFF:
-        try:
-            # 尝试获取 login_type 元素
-            login_type_element = driver.find_element(By.XPATH,
-                                                     '/html/body/div[2]/div[1]/div[4]/div[1]/div[1]/header/div/div/div[2]/div/pace-island/div/div[5]/div/div[1]/button/span/p')
-        except NoSuchElementException:
-            cooke = driver.get_cookies()
-            print(f'✅ Cooke获取成功,您的Cooke为 [请完整复制到cookies_list变量中]:\n{cooke}')
-            driver.close()
-            exit()
+    except Exception:
+        return '暂无今日名言'
 
 
 def format_time(time_str: str) -> str:
@@ -182,6 +165,7 @@ class Douyin:
         print('------------------')
 
     def Updara_FrinderList(self):
+        self.friends_xpath_list = {}  # 每次刷新前清空，避免旧数据残留
         friends_xpath = '//div[@class="conversationConversationListwrapper"]/div/div/div'
         msg_main_list = driver.find_elements(By.XPATH, friends_xpath)
         temp_list = []
@@ -207,35 +191,37 @@ class Douyin:
         return temp_list
 
     def Send_Frinder(self, name: str, text: str):
-        count = self.Updara_FrinderList()
-        if count == 0:
+        friends = self.Updara_FrinderList()
+        if not friends:
             print("⚠️ 更新好友列表失败!")
-        else:
-            try:
-                for index, value in self.friends_xpath_list.items():
-                    if index == name:
-                        friend_id = driver.find_element(By.XPATH, value=value)
-                        friend_id.click()
-                        time.sleep(1.5)
-                        seng = driver.find_element(By.XPATH,
-                                                   value='//div[@class="messageEditorimChatEditorContainer"]/div/div')
-                        seng.send_keys(text)
-                        seng.send_keys(Keys.ENTER)
-                        return TrueString(True, None)
-            except Exception as e:
-                return TrueString(False, e)
+            return TrueString(False, '更新好友列表失败')
+        try:
+            for index, value in self.friends_xpath_list.items():
+                if index == name:
+                    friend_id = driver.find_element(By.XPATH, value=value)
+                    friend_id.click()
+                    time.sleep(random.uniform(1.0, 2.5))
+                    seng = driver.find_element(By.XPATH,
+                                               value='//div[@class="messageEditorimChatEditorContainer"]/div/div')
+                    seng.send_keys(text)
+                    seng.send_keys(Keys.ENTER)
+                    return TrueString(True, None)
+            # 循环结束未匹配到好友
+            return TrueString(False, f'未找到好友: {name}')
+        except Exception as e:
+            return TrueString(False, str(e))
 
     def Open_Chat(self, name: str):
         """点击好友进入对话窗口"""
-        count = self.Updara_FrinderList()
-        if count == 0:
+        friends = self.Updara_FrinderList()
+        if not friends:
             return False
         try:
             for index, value in self.friends_xpath_list.items():
                 if index == name:
                     friend_id = driver.find_element(By.XPATH, value=value)
                     friend_id.click()
-                    time.sleep(1.5)
+                    time.sleep(random.uniform(1.0, 2.5))
                     return True
         except:
             return False
@@ -276,47 +262,45 @@ class Douyin:
             ''')
             if not opened:
                 return {'code': 400, 'data': '未找到表情按钮，请确认已进入对话'}
-            time.sleep(1.5)
+            time.sleep(random.uniform(1.0, 2.0))
 
-            # 2. 逐个点击 tab 并收集表情
-            all_stickers = driver.execute_script('''
+            # 2. 逐个点击 tab 并收集表情（异步，避免忙等待阻塞浏览器）
+            all_stickers = driver.execute_async_script('''
+                var callback = arguments[arguments.length - 1];
                 var result = [];
                 var seen = {};
-                // 获取所有 tab
                 var tabs = document.querySelectorAll('[class*="emojiEmojisModalTabsubTab"]');
                 if (tabs.length === 0) {
-                    // 兜底：面板内所有 img
                     var imgs = document.querySelectorAll('[class*="emoji"] img, [class*="Emoji"] img, [class*="sticker"] img');
                     for (var i = 0; i < imgs.length; i++) {
                         var src = imgs[i].src || '';
                         if (src && src.length > 20 && !seen[src]) { seen[src] = 1; result.push(src); }
                     }
-                    return result;
+                    callback(result);
+                    return;
                 }
-                // 逐个点击 tab 收集表情
-                for (var t = 0; t < tabs.length; t++) {
+                var t = 0;
+                function processTab() {
+                    if (t >= tabs.length) { callback(result); return; }
                     tabs[t].click();
-                    // 等待渲染（同步等待不可用，用一个小延迟）
-                    var start = Date.now();
-                    while (Date.now() - start < 600) {}
-                    // 收集当前 tab 内的表情
-                    var panelImgs = document.querySelectorAll('[class*="emojiEmojisModal"] img, [class*="emojiModalContent"] img, [class*="emojiPanel"] img');
-                    if (panelImgs.length === 0) {
-                        panelImgs = document.querySelectorAll('img');
-                    }
-                    for (var i = 0; i < panelImgs.length; i++) {
-                        var src = panelImgs[i].src || '';
-                        var rect = panelImgs[i].getBoundingClientRect();
-                        if (!src || src.length < 20) continue;
-                        // 过滤：只取表情图片（douyinpic / emoji / 含表情特征）
-                        if (src.indexOf('douyinpic') !== -1 || src.indexOf('emoji') !== -1 ||
-                            src.indexOf('sf-tk') !== -1 || src.indexOf('sticker') !== -1 ||
-                            (rect.width > 20 && rect.width < 200)) {
-                            if (!seen[src]) { seen[src] = 1; result.push(src); }
+                    t++;
+                    setTimeout(function() {
+                        var panelImgs = document.querySelectorAll('[class*="emojiEmojisModal"] img, [class*="emojiModalContent"] img, [class*="emojiPanel"] img');
+                        if (panelImgs.length === 0) panelImgs = document.querySelectorAll('img');
+                        for (var i = 0; i < panelImgs.length; i++) {
+                            var src = panelImgs[i].src || '';
+                            var rect = panelImgs[i].getBoundingClientRect();
+                            if (!src || src.length < 20) continue;
+                            if (src.indexOf('douyinpic') !== -1 || src.indexOf('emoji') !== -1 ||
+                                src.indexOf('sf-tk') !== -1 || src.indexOf('sticker') !== -1 ||
+                                (rect.width > 20 && rect.width < 200)) {
+                                if (!seen[src]) { seen[src] = 1; result.push(src); }
+                            }
                         }
-                    }
+                        processTab();
+                    }, 600);
                 }
-                return result;
+                processTab();
             ''')
 
             # 3. 关闭表情面板
@@ -359,30 +343,41 @@ class Douyin:
                     if (rect.width > 10 && rect.height > 10 && rect.top < window.innerHeight && rect.top > 50) { all[i].click(); return; }
                 }
             ''')
-            time.sleep(1.5)
-            # 收集所有 tab 的表情并点击指定索引
-            clicked = driver.execute_script('''
+            time.sleep(random.uniform(1.0, 2.0))
+            # 收集所有 tab 的表情并点击指定索引（异步，避免忙等待）
+            clicked = driver.execute_async_script('''
+                var callback = arguments[arguments.length - 1];
+                var sticker_index = arguments[0];
                 var imgs = [];
                 var seen = {};
                 var tabs = document.querySelectorAll('[class*="emojiEmojisModalTabsubTab"]');
                 if (tabs.length > 0) {
-                    for (var t = 0; t < tabs.length; t++) {
-                        tabs[t].click();
-                        var start = Date.now();
-                        while (Date.now() - start < 600) {}
-                        var panelImgs = document.querySelectorAll('[class*="emojiEmojisModal"] img, [class*="emojiModalContent"] img, [class*="emojiPanel"] img');
-                        if (panelImgs.length === 0) panelImgs = document.querySelectorAll('img');
-                        for (var i = 0; i < panelImgs.length; i++) {
-                            var src = panelImgs[i].src || '';
-                            var rect = panelImgs[i].getBoundingClientRect();
-                            if (!src || src.length < 20) continue;
-                            if (src.indexOf('douyinpic') !== -1 || src.indexOf('emoji') !== -1 ||
-                                src.indexOf('sf-tk') !== -1 || src.indexOf('sticker') !== -1 ||
-                                (rect.width > 20 && rect.width < 200)) {
-                                if (!seen[src]) { seen[src] = 1; imgs.push(panelImgs[i]); }
-                            }
+                    var t = 0;
+                    function processTab() {
+                        if (t >= tabs.length) {
+                            if (imgs.length > sticker_index) { imgs[sticker_index].click(); callback(true); }
+                            else callback(false);
+                            return;
                         }
+                        tabs[t].click();
+                        t++;
+                        setTimeout(function() {
+                            var panelImgs = document.querySelectorAll('[class*="emojiEmojisModal"] img, [class*="emojiModalContent"] img, [class*="emojiPanel"] img');
+                            if (panelImgs.length === 0) panelImgs = document.querySelectorAll('img');
+                            for (var i = 0; i < panelImgs.length; i++) {
+                                var src = panelImgs[i].src || '';
+                                var rect = panelImgs[i].getBoundingClientRect();
+                                if (!src || src.length < 20) continue;
+                                if (src.indexOf('douyinpic') !== -1 || src.indexOf('emoji') !== -1 ||
+                                    src.indexOf('sf-tk') !== -1 || src.indexOf('sticker') !== -1 ||
+                                    (rect.width > 20 && rect.width < 200)) {
+                                    if (!seen[src]) { seen[src] = 1; imgs.push(panelImgs[i]); }
+                                }
+                            }
+                            processTab();
+                        }, 600);
                     }
+                    processTab();
                 } else {
                     var allImgs = document.querySelectorAll('img');
                     for (var i = 0; i < allImgs.length; i++) {
@@ -394,13 +389,13 @@ class Douyin:
                             if (!seen[src]) { seen[src] = 1; imgs.push(allImgs[i]); }
                         }
                     }
+                    if (imgs.length > sticker_index) { imgs[sticker_index].click(); callback(true); }
+                    else callback(false);
                 }
-                if (imgs.length > arguments[0]) { imgs[arguments[0]].click(); return true; }
-                return false;
             ''', sticker_index)
             if not clicked:
                 return TrueString(False, '表情索引无效')
-            time.sleep(0.5)
+            time.sleep(random.uniform(0.3, 0.8))
             seng = driver.find_element(By.XPATH,
                                        value='//div[@class="messageEditorimChatEditorContainer"]/div/div')
             seng.send_keys(Keys.ENTER)
@@ -413,7 +408,7 @@ class Douyin:
         try:
             if not self.Open_Chat(name):
                 return {'code': 400, 'data': '未找到该好友'}
-            time.sleep(1)
+            time.sleep(random.uniform(0.8, 1.5))
             # 尝试读取消息列表
             msg_xpaths = [
                 '//div[contains(@class,"imChatMessage")]//div[contains(@class,"messageContent")]',
@@ -442,9 +437,9 @@ class Douyin:
             return {'code': 500, 'data': f'获取聊天记录失败: {str(e)}'}
 
     def Find_Friends(self, name: str):
-        count = self.Updara_FrinderList()
+        friends = self.Updara_FrinderList()
         is_find = False
-        if count == 0:
+        if not friends:
             return TrueString(False, '未初始化好友')
         try:
             for index, value in self.friends_xpath_list.items():
@@ -468,10 +463,10 @@ init_lock = threading.Lock()  # 防止并发初始化
 Login_is_bool = False
 app = FastAPI()
 
-# CORS 配置
+# CORS 配置（前后端同源，仅允许本地访问）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost", "http://127.0.0.1", "http://localhost:8080", "http://127.0.0.1:8080"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -487,12 +482,29 @@ class APIRewriteMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(APIRewriteMiddleware)
 
-# 密码存储（持久化到 config.json）
-_password = config.get('password', '123456')  # 默认密码
-
-
+# 密码 hash 工具
 def hash_pwd(pwd: str) -> str:
     return hashlib.sha256(pwd.encode()).hexdigest()
+
+
+# 密码存储（hash 持久化到 config.json，不存明文）
+# 兼容旧版：如果 config.json 中有明文 password，首次启动时自动迁移为 hash
+_DEFAULT_PWD_HASH = hash_pwd('123456')  # 默认密码 123456 的 hash
+if 'password_hash' in config:
+    _password_hash = config['password_hash']
+elif 'password' in config:
+    # 旧版明文迁移
+    _password_hash = hash_pwd(config['password'])
+    config['password_hash'] = _password_hash
+    config.pop('password', None)  # 删除明文
+    save_config(config)
+else:
+    _password_hash = _DEFAULT_PWD_HASH
+
+
+def verify_pwd(pwd: str) -> bool:
+    """验证密码是否正确"""
+    return hash_pwd(pwd) == _password_hash
 
 
 # Token存储
@@ -533,7 +545,18 @@ def check_driver():
         driver.current_url
         return None
     except Exception:
-        # 会话已失效，重置状态
+        # 会话已失效，关闭旧 driver 并重置状态
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        # 清理旧定时任务（job 仍绑定旧的 douyin 引用）
+        for task_id, job in list(scheduled_tasks.items()):
+            try:
+                schedule.cancel_job(job)
+            except Exception:
+                pass
+        scheduled_tasks.clear()
         init = False
         driver = None
         douyin = None
@@ -544,8 +567,72 @@ def check_driver():
 # 定时任务存储
 scheduled_tasks = {}  # 格式: {任务ID: job对象}
 
+# 定时任务持久化文件
+TASKS_FILE = os.path.join(BASE_DIR, 'tasks.json')
+
+
+def save_tasks():
+    """将定时任务元数据持久化到 tasks.json"""
+    tasks_meta = []
+    for task_id in scheduled_tasks:
+        parts = task_id.split('_', 1)
+        if len(parts) == 2:
+            time_str, name = parts
+            # 从 job 对象中提取消息参数（Send_Frinder 的第三个参数）
+            msg = ''
+            job = scheduled_tasks[task_id]
+            try:
+                msg = job.job_func.args[2] if len(job.job_func.args) > 2 else ''
+            except Exception:
+                pass
+            tasks_meta.append({'task_id': task_id, 'time': time_str, 'name': name, 'msg': msg})
+    try:
+        with open(TASKS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(tasks_meta, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f'⚠️ 定时任务持久化失败: {e}')
+
+
+def load_tasks_meta():
+    """从 tasks.json 读取任务元数据"""
+    if not os.path.exists(TASKS_FILE):
+        return []
+    try:
+        with open(TASKS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def restore_tasks():
+    """浏览器初始化后，从持久化文件恢复定时任务"""
+    meta_list = load_tasks_meta()
+    restored = 0
+    for meta in meta_list:
+        try:
+            task_id = meta.get('task_id', '')
+            play_time = meta.get('time', '22:00')
+            name = meta.get('name', '')
+            msg = meta.get('msg', '')
+            if not name or task_id in scheduled_tasks:
+                continue
+            # 若无保存的消息，用随机名言
+            if not msg:
+                msg = AiqingGongyu_text()
+            job = schedule.every().day.at(play_time).do(douyin.Send_Frinder, name, msg)
+            scheduled_tasks[task_id] = job
+            restored += 1
+        except Exception as e:
+            print(f'⚠️ 恢复任务失败: {e}')
+            continue
+    if restored > 0:
+        print(f'✅ 已恢复 {restored} 个定时任务')
+
 
 # 定时线程
+_scheduler_started = False  # 防止重复启动调度线程
+
+
 def run_schedule():
     """后台线程运行定时任务"""
     while True:
@@ -554,10 +641,13 @@ def run_schedule():
 
 
 def start_scheduler():
-    """启动定时任务调度线程"""
+    """启动定时任务调度线程（仅启动一次）"""
+    global _scheduler_started
+    if _scheduler_started:
+        return
     scheduler_thread = threading.Thread(target=run_schedule, daemon=True)
     scheduler_thread.start()
-    return scheduler_thread
+    _scheduler_started = True
 
 
 start_time = datetime.now()
@@ -595,7 +685,7 @@ def Init(authorization: str = Header(None)):
             # 打开抖音聊天页（设置较短的超时，避免长时间卡住）
             driver.set_page_load_timeout(30)
             try:
-                driver.get('https://www.douyin.com/chat?isPopup=1 ')
+                driver.get('https://www.douyin.com/chat?isPopup=1')
             except Exception:
                 # 页面加载超时也继续（SPA 页面可能触发超时但 DOM 已就绪）
                 pass
@@ -603,6 +693,7 @@ def Init(authorization: str = Header(None)):
             init = True
             Login_is_bool = False  # 新会话默认未登录
             start_scheduler()  # 启动调度线程
+            restore_tasks()  # 恢复持久化的定时任务
             return {'code': 200, 'data': 'success'}
         except SessionNotCreatedException as e:
             if "This version of Microsoft Edge WebDriver only supports" in str(e):
@@ -636,27 +727,31 @@ def Login(cooke: str = Body(default=None), gzip_flag: bool = Body(default=False)
                 try:
                     decoded_bytes = gzip.decompress(decoded_bytes)
                 except Exception:
-                    return {'code': '404',
+                    return {'code': 404,
                             'data': 'login-error-gzip decompress failed, check cookie format and gzip flag'}
             cookie_list = decoded_bytes.decode('utf-8')
-            cookies = json.loads(base64.b64decode(cookie_list).decode('utf-8'))
+            # 前端做了 JSON.stringify(cookie)，需要先 json.loads 去掉外层引号
+            cookie_b64 = json.loads(cookie_list)
+            # 再 base64 解码得到 cookie JSON
+            cookie_json = base64.b64decode(cookie_b64).decode('utf-8')
+            cookies = json.loads(cookie_json)
             for cookie in cookies:
                 driver.add_cookie(cookie)
         except Exception as e:
-            return {'code': '404', 'data': f'login-error-cookie parse error: {str(e)}'}
+            return {'code': 404, 'data': f'login-error-cookie parse error: {str(e)}'}
         driver.refresh()
         try:
             login_type_element = driver.find_element(By.XPATH, '//*[@id="douyin_login_comp_flat_panel"]/picture')
             login_type = login_type_element.text
-            return {'code': '404', 'data': 'login-error-cooker cant login'}
+            return {'code': 404, 'data': 'login-error-cooker cant login'}
         except NoSuchElementException:
             Login_is_bool = True
-            return {'code': '200', 'data': 'ok'}
+            return {'code': 200, 'data': 'ok'}
     else:
-        return {'code': '404', 'data': 'login-error-not cooker'}  # # @#z
+        return {'code': 404, 'data': 'login-error-not cooker'}
 
 
-@app.get('/Api/Pnglogin')  # 扫码登录
+@app.get('/Api/Pnglogin')  # 扫码登录后检查状态
 def PngLogin(authorization: str = Header(None)):
     auth_err = require_auth(authorization)
     if auth_err:
@@ -665,24 +760,17 @@ def PngLogin(authorization: str = Header(None)):
     drv_err = check_driver()
     if drv_err:
         return drv_err
-    cooke = driver.get_cookies()
-    if cooke:
-        try:
-            for cookie in cooke:
-                driver.add_cookie(cookie)
-        except Exception as e:
-            return {'code': '404', 'data': f'login-error-cookie parse error: {str(e)}'}
-        driver.refresh()
-        try:
-            login_type_element = driver.find_element(By.XPATH, '//*[@id="douyin_login_comp_flat_panel"]/picture')
-            login_type = login_type_element.text
-            driver.refresh()
-            return {'code': '404', 'data': '系统繁忙,请稍后重新登录'}
-        except NoSuchElementException:
-            Login_is_bool = True
-            return {'code': '200', 'data': 'ok'}
-    else:
-        return {'code': '404', 'data': 'login-error-not cooker'}  # # @#z
+    # 刷新页面检查登录状态（无需 cookie 自循环）
+    driver.refresh()
+    try:
+        login_type_element = driver.find_element(By.XPATH, '//*[@id="douyin_login_comp_flat_panel"]/picture')
+        # 找到登录弹窗 = 未登录
+        Login_is_bool = False
+        return {'code': 404, 'data': '系统繁忙,请稍后重新登录'}
+    except NoSuchElementException:
+        # 没有登录弹窗 = 已登录
+        Login_is_bool = True
+        return {'code': 200, 'data': 'ok'}
 
 
 @app.get('/Api/GetLogin')  # 获取登录
@@ -696,8 +784,8 @@ def GetLogin(authorization: str = Header(None)):
         Login_is_bool = False
         return {'code': 200, 'data': 'No'}
     try:
-        # 等待页面加载完成，避免误判（刚初始化时页面还没渲染登录弹窗）
-        time.sleep(1.5)
+        # 短暂等待页面渲染（降低频率，避免频繁触发风控）
+        time.sleep(0.3)
         driver.find_element(By.XPATH, '//*[@id="douyin_login_comp_flat_panel"]/picture')
         # 找到登录弹窗 = 未登录
         Login_is_bool = False
@@ -752,7 +840,7 @@ def GetCooke(password: str = Query(None), authorization: str = Header(None)):
     if auth_err:
         return auth_err
     # 验证密码
-    if not password or hash_pwd(password) != hash_pwd(_password):
+    if not password or not verify_pwd(password):
         return {'code': 400, 'data': '密码错误'}
     drv_err = check_driver()
     if drv_err:
@@ -779,7 +867,7 @@ def GetFrindesList(authorization: str = Header(None)):
         return drv_err
     try:
         friends_list = douyin.Updara_FrinderList()
-        if len(friends_list) == 0:
+        if not friends_list:
             return {'code': 404, 'data': '暂无好友或页面未加载'}
         dicts = {}
         for v in friends_list:
@@ -798,12 +886,11 @@ def Send(name: str, text: str, authorization: str = Header(None)):
     if drv_err:
         return drv_err
     try:
-        Douyin.Updara_FrinderList(douyin)
         out = Douyin.Send_Frinder(douyin, name, text)
         if out.is_bool:
             return {'code': 200, 'data': 'Send successfully'}
         else:
-            return {'code': 404, 'data': out.string}
+            return {'code': 404, 'data': out.string or '发送失败'}
     except Exception as e:
         return {'code': 500, 'data': f'发送失败: {str(e)}'}
 
@@ -916,7 +1003,7 @@ def GetUserInfo(authorization: str = Header(None)):
                     time.sleep(random.uniform(1, 2))
                     try:
                         driver.get(current_url)
-                        time.sleep(1.5)
+                        time.sleep(random.uniform(1.0, 2.0))
                     except Exception:
                         pass
 
@@ -969,22 +1056,27 @@ def DieLogin(authorization: str = Header(None)):
     auth_err = require_auth(authorization)
     if auth_err:
         return auth_err
+    global Login_is_bool
     drv_err = check_driver()
     if drv_err:
         return drv_err
     try:
         driver.delete_all_cookies()
         driver.refresh()
+        Login_is_bool = False
         return {'code': 200, 'data': '已清除Cooke'}
     except Exception as e:
         return {'code': 500, 'data': f'清除Cookie失败: {str(e)}'}
 
 
 @app.get('/Api/LoginPhone')  # 验证码登录
-def authorization(areacode: str, phone: str, authorization: str = Header(None)):
+def LoginPhone(areacode: str, phone: str, authorization: str = Header(None)):
     auth_err = require_auth(authorization)
     if auth_err:
         return auth_err
+    drv_err = check_driver()
+    if drv_err:
+        return drv_err
     try:
         Douyin.LoginInit(douyin)
         areacode_value = driver.find_element(By.XPATH, '//*[@id="douyin_login_comp_normal_input_id"]/div[1]/div/input')
@@ -1000,15 +1092,18 @@ def authorization(areacode: str, phone: str, authorization: str = Header(None)):
         else:
             return {'code': 200, 'data': '验证码发送成功'}
     except Exception as e:
-        return {'code': 400, 'data': e}
+        return {'code': 400, 'data': str(e)}
 
 
 @app.get('/Api/LoginPhoneInput')  # 验证码登录 2 输入验证码
-def authorizations(code: str, authorization: str = Header(None)):
+def LoginPhoneInput(code: str, authorization: str = Header(None)):
     global Login_is_bool
     auth_err = require_auth(authorization)
     if auth_err:
         return auth_err
+    drv_err = check_driver()
+    if drv_err:
+        return drv_err
     try:
         inp = driver.find_element(By.XPATH, '//*[@id="button-input"]')
         inp.send_keys(code)
@@ -1022,15 +1117,18 @@ def authorizations(code: str, authorization: str = Header(None)):
             Login_is_bool = True
             return {'code': 200, 'data': '登录成功'}
     except Exception as e:
-        return {'code': 400, 'data': e}
+        return {'code': 400, 'data': str(e)}
 
 
-@app.get('/Api/LoginDebug')
-def LoginDebug(authorization: str = Header(None)):
+@app.get('/Api/LoginDebug')  # 强制登录状态（调试用，需密码确认）
+def LoginDebug(password: str = Query(None), authorization: str = Header(None)):
     global Login_is_bool
     auth_err = require_auth(authorization)
     if auth_err:
         return auth_err
+    # 调试接口需二次密码确认，防止误用
+    if not password or not verify_pwd(password):
+        return {'code': 403, 'data': '需要密码确认才能使用此功能'}
     if Login_is_bool == False:
         Login_is_bool = True
         return {'code': 200, 'data': 'OK'}
@@ -1044,6 +1142,9 @@ def add_time(time: str, name: str, text: str = None, authorization: str = Header
     auth_err = require_auth(authorization)
     if auth_err:
         return auth_err
+    drv_err = check_driver()
+    if drv_err:
+        return drv_err
     # 检查是否已存在该好友的定时任务
     for task_id, job in scheduled_tasks.items():
         if task_id.endswith(f"_{name}"):
@@ -1058,6 +1159,7 @@ def add_time(time: str, name: str, text: str = None, authorization: str = Header
         # 生成唯一任务ID
         task_id = f"{play_time}_{name}"
         scheduled_tasks[task_id] = job
+        save_tasks()  # 持久化
         return {'code': 200, 'data': f'已添加定时任务: {play_time}', 'task_id': task_id}
     else:
         return {'code': 404, 'data': temp.string}
@@ -1073,6 +1175,7 @@ def del_time(task_id: str, authorization: str = Header(None)):
         job = scheduled_tasks[task_id]
         schedule.cancel_job(job)
         del scheduled_tasks[task_id]
+        save_tasks()  # 持久化
         return {'code': 200, 'data': f'已删除任务: {task_id}'}
     else:
         return {'code': 404, 'data': '任务ID不存在'}
@@ -1083,6 +1186,9 @@ def edit_time(name: str, new_time: str, authorization: str = Header(None)):
     auth_err = require_auth(authorization)
     if auth_err:
         return auth_err
+    drv_err = check_driver()
+    if drv_err:
+        return drv_err
     """修改指定好友的定时任务时间"""
     # 查找该好友的现有任务
     old_task_id = None
@@ -1102,15 +1208,22 @@ def edit_time(name: str, new_time: str, authorization: str = Header(None)):
     parts = old_task_id.split('_', 1)
     old_time = parts[0] if len(parts) == 2 else ""
 
-    # 创建新任务
+    # 创建新任务（保留原消息，不覆盖）
     new_play_time = format_time(new_time)
-    msg = AiqingGongyu_text()  # 获取新的名言
+    # 从旧 job 提取原消息
+    old_msg = ''
+    try:
+        old_msg = old_job.job_func.args[2] if len(old_job.job_func.args) > 2 else ''
+    except Exception:
+        pass
+    msg = old_msg if old_msg else AiqingGongyu_text()
     new_job = schedule.every().day.at(new_play_time).do(douyin.Send_Frinder, name, msg)
 
     # 生成新任务ID并替换
     new_task_id = f"{new_play_time}_{name}"
     scheduled_tasks[new_task_id] = new_job
     del scheduled_tasks[old_task_id]
+    save_tasks()  # 持久化
 
     return {
         'code': 200,
@@ -1146,8 +1259,11 @@ def get_time_list(authorization: str = Header(None)):
 @app.get('/Api/Login/Admin')
 def admin_login(username: str, password: str, request: Request = None):
     global _last_login_ip
-    if username == 'admin' and hash_pwd(password) == hash_pwd(_password):
-        _last_login_ip = '127.0.0.1' if request and request.client.host in ('::1', '127.0.0.1') else (request.client.host if request else '127.0.0.1')
+    if username == 'admin' and verify_pwd(password):
+        client_host = '127.0.0.1'
+        if request and request.client:
+            client_host = '127.0.0.1' if request.client.host in ('::1', '127.0.0.1') else request.client.host
+        _last_login_ip = client_host
         token = generate_token()
         return {'code': 200, 'data': token}
     else:
@@ -1179,11 +1295,12 @@ def change_password(old_password: str, new_password: str, authorization: str = H
     auth_err = require_auth(authorization)
     if auth_err:
         return auth_err
-    global _password
-    if hash_pwd(old_password) != hash_pwd(_password):
+    global _password_hash
+    if not verify_pwd(old_password):
         return {'code': 400, 'data': '原密码错误'}
-    _password = new_password
-    config['password'] = new_password
+    _password_hash = hash_pwd(new_password)
+    config['password_hash'] = _password_hash
+    config.pop('password', None)  # 确保明文已清除
     save_config(config)
     return {'code': 200, 'data': '密码修改成功'}
 
@@ -1243,7 +1360,10 @@ if os.path.exists(DIST_DIR):
     # SPA 路由回退：所有非 API 请求都返回 index.html 或对应静态文件
     @app.get('/{path:path}')
     async def serve_spa(path: str):
-        file_path = os.path.join(DIST_DIR, path)
+        file_path = os.path.realpath(os.path.join(DIST_DIR, path))
+        # 防止路径穿越：确保文件在 DIST_DIR 内
+        if not file_path.startswith(os.path.realpath(DIST_DIR)):
+            return FileResponse(os.path.join(DIST_DIR, 'index.html'), media_type='text/html')
         if os.path.isfile(file_path):
             # 根据扩展名设置正确的 Content-Type
             import mimetypes
@@ -1252,6 +1372,22 @@ if os.path.exists(DIST_DIR):
             content_type, _ = mimetypes.guess_type(file_path)
             return FileResponse(file_path, media_type=content_type)
         return FileResponse(os.path.join(DIST_DIR, 'index.html'), media_type='text/html')
+
+
+import atexit
+
+
+def cleanup_on_exit():
+    """程序退出时清理浏览器进程"""
+    global driver, init
+    if init and driver:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
+atexit.register(cleanup_on_exit)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,9 @@
 # 用户配置（含本地端口设置）
 config.json
+tasks.json
+
+# Edge 浏览器用户数据
+edge_user_data/
 
 # IDE
 .idea/

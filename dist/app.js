@@ -73,7 +73,7 @@ const API = {
   getUsername: () => api.get('/Api/GetUsername'),
   changePassword: (old_password, new_password) => api.get('/Api/ChangePassword', { params: { old_password, new_password } }),
   getLastLoginIP: () => api.get('/Api/GetLastLoginIP'),
-  forceLogin: () => api.get('/Api/LoginDebug'),
+  forceLogin: (password) => api.get('/Api/LoginDebug', { params: { password } }),
   getPort: () => api.get('/Api/GetPort'),
   setPort: (port) => api.get('/Api/SetPort', { params: { port } }),
   getBrowserMode: () => api.get('/Api/GetBrowserMode'),
@@ -389,7 +389,8 @@ const Home = {
         if (!browserStatus.value) ElMessageBox.confirm('浏览器未初始化，是否立即初始化？', '提示', { confirmButtonText: '立即初始化', cancelButtonText: '稍后', type: 'warning' }).then(async () => await initBrowser()).catch(() => {});
       } catch (e) { browserStatus.value = false; setBrowserStatus(false); }
     };
-    const checkLoginStatus = async () => { try { const res = await API.getLoginStatus(); loginStatus.value = res.data === 'Yes'; setLoginStatus(loginStatus.value); if (loginStatus.value && !douyinNickname.value) { try { const u = await API.getUsername(); if (u.code == 200 && u.data) setDouyinUser(u.data.nickname || '', u.data.avatar || ''); } catch (e) {} } else if (!loginStatus.value) { setDouyinUser('', ''); } } catch (e) { loginStatus.value = false; setLoginStatus(false); } };
+    let _lastLoginCheck = 0;
+    const checkLoginStatus = async (force = false) => { const now = Date.now(); if (!force && now - _lastLoginCheck < 30000) return; _lastLoginCheck = now; try { const res = await API.getLoginStatus(); loginStatus.value = res.data === 'Yes'; setLoginStatus(loginStatus.value); if (loginStatus.value && !douyinNickname.value) { try { const u = await API.getUsername(); if (u.code == 200 && u.data) setDouyinUser(u.data.nickname || '', u.data.avatar || ''); } catch (e) {} } else if (!loginStatus.value) { setDouyinUser('', ''); } } catch (e) { loginStatus.value = false; setLoginStatus(false); } };
     const refreshFriends = async () => {
       try { const res = await API.getFriendsList(); const list = res.data.list || {}; const fl = Object.entries(list).map(([name, [avatar, fire]]) => ({ name, avatar, fire })); setFriendsList(fl); friendsCount.value = res.data.count || 0; ElMessage.success('刷新成功');
       } catch (e) {
@@ -402,7 +403,7 @@ const Home = {
     const initBrowser = async () => {
       if (initLoading.value) return;  // 防止重复点击
       initLoading.value = true;
-      try { const res = await API.initBrowser(); if (res.code === 200) { browserStatus.value = true; setBrowserStatus(true); setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); ElMessage.success('浏览器初始化成功'); await checkLoginStatus(); if (!loginStatus.value) ElMessageBox.confirm('浏览器初始化成功，但您还未登录抖音账号，是否前往登录？', '提示', { confirmButtonText: '前往登录', cancelButtonText: '稍后', type: 'warning' }).then(() => window.location.href = '/settings').catch(() => {}); } }
+      try { const res = await API.initBrowser(); if (res.code === 200) { browserStatus.value = true; setBrowserStatus(true); setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); ElMessage.success('浏览器初始化成功'); await checkLoginStatus(true); if (!loginStatus.value) ElMessageBox.confirm('浏览器初始化成功，但您还未登录抖音账号，是否前往登录？', '提示', { confirmButtonText: '前往登录', cancelButtonText: '稍后', type: 'warning' }).then(() => window.location.href = '/settings').catch(() => {}); } }
       catch (e) { ElMessage.error('浏览器初始化失败'); } finally { initLoading.value = false; }
     };
     onMounted(async () => {
@@ -892,8 +893,9 @@ const Settings = {
 
     const fetchLastLoginIP = async () => { try { const res = await API.getLastLoginIP(); if (res.code == 200) { lastLoginIP.value = res.data || '无'; localStorage.setItem('douyin_last_login_ip', lastLoginIP.value); } } catch (e) { lastLoginIP.value = '获取失败'; } };
     const fetchUsername = async () => { try { const res = await API.getUsername(); if (res.code == 200 && res.data) { const nick = res.data.nickname || ''; const av = res.data.avatar || ''; username.value = nick; usernameLoaded.value = true; setDouyinUser(nick, av); localStorage.setItem('douyin_username_loaded', '1'); } } catch (e) {} };
-    const checkLoginStatus = async () => { try { const res = await API.getLoginStatus(); loginStatus.value = res.data === 'Yes'; setLoginStatus(loginStatus.value); if (loginStatus.value && !usernameLoaded.value) await fetchUsername(); } catch (e) { loginStatus.value = false; setLoginStatus(false); } };
-    const handleRefreshStatus = async () => { refreshStatusLoading.value = true; try { usernameLoaded.value = false; setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); await checkLoginStatus(); await fetchLastLoginIP(); ElMessage.success(loginStatus.value ? '已登录' : '未登录'); } finally { refreshStatusLoading.value = false; } };
+    let _lastLoginCheckSetting = 0;
+    const checkLoginStatus = async (force = false) => { const now = Date.now(); if (!force && now - _lastLoginCheckSetting < 30000) return; _lastLoginCheckSetting = now; try { const res = await API.getLoginStatus(); loginStatus.value = res.data === 'Yes'; setLoginStatus(loginStatus.value); if (loginStatus.value && !usernameLoaded.value) await fetchUsername(); } catch (e) { loginStatus.value = false; setLoginStatus(false); } };
+    const handleRefreshStatus = async () => { refreshStatusLoading.value = true; try { usernameLoaded.value = false; setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); await checkLoginStatus(true); await fetchLastLoginIP(); ElMessage.success(loginStatus.value ? '已登录' : '未登录'); } finally { refreshStatusLoading.value = false; } };
     const fetchFriendsList = async () => { try { const res = await API.getFriendsList(); if (res.code === 200) { const list = res.data.list || {}; setFriendsList(Object.entries(list).map(([name, [avatar, fire]]) => ({ name, avatar, fire }))); } } catch (e) {} };
     const handleCheckLogin = async () => { checkLoading.value = true; try { const res = await API.pnglogin(); loginStatus.value = res.code == 200; setLoginStatus(loginStatus.value); if (loginStatus.value) { ElMessage.success('登录成功'); qrDialogVisible.value = false; username.value = ''; usernameLoaded.value = false; setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); await fetchUsername(); await fetchFriendsList(); } else ElMessage.warning('未登录，请继续扫码'); } catch (e) { ElMessage.error('扫码登录失败，请重试'); } finally { checkLoading.value = false; } };
     const handleRefreshCode = async () => { refreshLoading.value = true; try { await API.initBrowser(); const res = await API.getLoginPng(); if (res.data) { qrcodeUrl.value = res.data; qrDialogVisible.value = true; ElMessage.success('刷新成功'); } else ElMessage.error('获取二维码失败'); } catch (e) { ElMessage.error('刷新失败，请确保浏览器已初始化'); } finally { refreshLoading.value = false; } };
@@ -904,7 +906,14 @@ const Settings = {
     const handleSendCode = async () => { if (!phoneForm.value.phone) { ElMessage.warning('请输入手机号'); return; } codeLoading.value = true; try { const res = await API.sendVerifyCode(phoneForm.value.areacode, phoneForm.value.phone); if (res.code == 200) { ElMessage.success('验证码发送成功'); codeCountdown.value = 60; const timer = setInterval(() => { codeCountdown.value--; if (codeCountdown.value <= 0) clearInterval(timer); }, 1000); } else ElMessage.error(res.data || '验证码发送失败'); } catch (e) { ElMessage.error('验证码发送失败，请确保浏览器已初始化'); } finally { codeLoading.value = false; } };
     const handlePhoneLogin = async () => { if (!phoneForm.value.phone) { ElMessage.warning('请输入手机号'); return; } if (!phoneForm.value.code) { ElMessage.warning('请输入验证码'); return; } phoneLoading.value = true; try { const res = await API.submitVerifyCode(phoneForm.value.code); if (res.code == 200) { ElMessage.success('登录成功'); phoneDialogVisible.value = false; setLoginStatus(true); username.value = ''; usernameLoaded.value = false; setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); await fetchUsername(); } else ElMessage.error(res.data || '登录失败'); } catch (e) { ElMessage.error('登录失败，请重试'); } finally { phoneLoading.value = false; } };
     const handleGetScreenshot = async () => { screenshotLoading.value = true; screenshotUrl.value = ''; try { const res = await API.getScrlk(); if (res.code == 200) { screenshotUrl.value = 'data:image/png;base64,' + res.data; screenshotPreviewVisible.value = true; } else ElMessage.error(res.data || '获取截图失败'); } catch (e) { ElMessage.error('获取截图失败，请确保已登录'); } finally { screenshotLoading.value = false; } };
-    const handleForceLogin = async () => { try { const res = await API.forceLogin(); if (res.code == 200) ElMessage.success(res.data || '强制登录状态成功'); else ElMessage.error(res.data || '强制登录状态失败'); } catch (e) { ElMessage.error('强制登录状态失败'); } };
+    const handleForceLogin = async () => {
+      try {
+        const { value } = await ElMessageBox.prompt('请输入密码以确认使用调试功能', '安全确认', { confirmButtonText: '确认', cancelButtonText: '取消', inputType: 'password', inputPlaceholder: '请输入密码' });
+        if (!value) { ElMessage.warning('请输入密码'); return; }
+        const res = await API.forceLogin(value);
+        if (res.code == 200) ElMessage.success(res.data || '强制登录状态成功'); else ElMessage.error(res.data || '强制登录状态失败');
+      } catch (e) { if (e !== 'cancel') ElMessage.error('强制登录状态失败'); }
+    };
     const fetchPort = async () => { try { const res = await API.getPort(); if (res.code == 200) currentPort.value = res.data; } catch (e) {} };
     const handleSetPort = async () => { const p = parseInt(portForm.value.new_port); if (!p) { ElMessage.warning('请输入端口号'); return; } if (p < 1 || p > 65535) { ElMessage.warning('端口范围 1-65535'); return; } portLoading.value = true; try { const res = await API.setPort(p); if (res.code == 200) { ElMessage.success(res.data || '保存成功，重启后端后生效'); currentPort.value = p; portForm.value.new_port = ''; } else ElMessage.error(res.data || '保存失败'); } catch (e) { ElMessage.error('保存失败'); } finally { portLoading.value = false; } };
     const fetchBrowserMode = async () => { try { const res = await API.getBrowserMode(); if (res.code == 200) browserMode.value = res.data; } catch (e) {} };
