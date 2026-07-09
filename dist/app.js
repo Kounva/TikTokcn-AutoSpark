@@ -15,9 +15,9 @@ api.interceptors.response.use(response => {
   if (ct && ct.includes('application/json')) {
     const res = response.data;
     if (res && res.code !== undefined && res.code == 401) {
-      ElMessage.error('登录已过期，请重新登录');
+      const hadToken = !!response.config?.headers?.Authorization;
       localStorage.removeItem('token'); localStorage.removeItem('douyin_token');
-      setTimeout(() => window.location.replace('/login'), 1500);
+      if (hadToken) { ElMessage.error('登录已过期，请重新登录'); setTimeout(() => window.location.replace('/login'), 1500); }
       return Promise.reject(new Error(res.data || '未授权'));
     }
     if (res && res.code !== undefined && res.code != 200 && res.code != '200') {
@@ -31,9 +31,9 @@ api.interceptors.response.use(response => {
   if (error.response) {
     const status = error.response.status, data = error.response.data;
     if (status === 401) {
-      ElMessage.error('登录已过期，请重新登录');
+      const hadToken = !!error.config?.headers?.Authorization;
       localStorage.removeItem('token'); localStorage.removeItem('douyin_token');
-      setTimeout(() => window.location.replace('/login'), 1500);
+      if (hadToken) { ElMessage.error('登录已过期，请重新登录'); setTimeout(() => window.location.replace('/login'), 1500); }
       return;
     } else if (status === 500) ElMessage.error('服务器内部错误');
     else if (status === 404) ElMessage.error('请求的资源不存在');
@@ -44,7 +44,7 @@ api.interceptors.response.use(response => {
 });
 
 const API = {
-  initBrowser: () => api.get('/Api/Init'),
+  initBrowser: () => api.get('/Api/Init', { timeout: 60000 }),
   getInitStatus: () => api.get('/Api/GetInit'),
   getLoginStatus: () => api.get('/Api/GetLogin'),
   pnglogin: () => api.get('/Api/Pnglogin'),
@@ -274,7 +274,7 @@ const Layout = {
       if (cmd === 'logout') {
         ElMessageBox.confirm('确定要退出登录吗？', '提示', { type: 'warning' }).then(async () => {
           try { await API.logout(); } catch (e) {}
-          userStore.logout(); router.push('/login');
+          userStore.logout(); setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); router.push('/login');
         }).catch(() => {});
       }
     };
@@ -389,7 +389,7 @@ const Home = {
         if (!browserStatus.value) ElMessageBox.confirm('浏览器未初始化，是否立即初始化？', '提示', { confirmButtonText: '立即初始化', cancelButtonText: '稍后', type: 'warning' }).then(async () => await initBrowser()).catch(() => {});
       } catch (e) { browserStatus.value = false; setBrowserStatus(false); }
     };
-    const checkLoginStatus = async () => { try { const res = await API.getLoginStatus(); loginStatus.value = res.data === 'Yes'; setLoginStatus(loginStatus.value); if (loginStatus.value && !douyinNickname.value) { try { const u = await API.getUsername(); if (u.code == 200 && u.data) setDouyinUser(u.data.nickname || '', u.data.avatar || ''); } catch (e) {} } } catch (e) { loginStatus.value = false; setLoginStatus(false); } };
+    const checkLoginStatus = async () => { try { const res = await API.getLoginStatus(); loginStatus.value = res.data === 'Yes'; setLoginStatus(loginStatus.value); if (loginStatus.value && !douyinNickname.value) { try { const u = await API.getUsername(); if (u.code == 200 && u.data) setDouyinUser(u.data.nickname || '', u.data.avatar || ''); } catch (e) {} } else if (!loginStatus.value) { setDouyinUser('', ''); } } catch (e) { loginStatus.value = false; setLoginStatus(false); } };
     const refreshFriends = async () => {
       try { const res = await API.getFriendsList(); const list = res.data.list || {}; const fl = Object.entries(list).map(([name, [avatar, fire]]) => ({ name, avatar, fire })); setFriendsList(fl); friendsCount.value = res.data.count || 0; ElMessage.success('刷新成功');
       } catch (e) {
@@ -402,7 +402,7 @@ const Home = {
     const initBrowser = async () => {
       if (initLoading.value) return;  // 防止重复点击
       initLoading.value = true;
-      try { const res = await API.initBrowser(); if (res.code === 200) { browserStatus.value = true; setBrowserStatus(true); ElMessage.success('浏览器初始化成功'); await checkLoginStatus(); if (!loginStatus.value) ElMessageBox.confirm('浏览器初始化成功，但您还未登录抖音账号，是否前往登录？', '提示', { confirmButtonText: '前往登录', cancelButtonText: '稍后', type: 'warning' }).then(() => window.location.href = '/settings').catch(() => {}); } }
+      try { const res = await API.initBrowser(); if (res.code === 200) { browserStatus.value = true; setBrowserStatus(true); setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); ElMessage.success('浏览器初始化成功'); await checkLoginStatus(); if (!loginStatus.value) ElMessageBox.confirm('浏览器初始化成功，但您还未登录抖音账号，是否前往登录？', '提示', { confirmButtonText: '前往登录', cancelButtonText: '稍后', type: 'warning' }).then(() => window.location.href = '/settings').catch(() => {}); } }
       catch (e) { ElMessage.error('浏览器初始化失败'); } finally { initLoading.value = false; }
     };
     onMounted(async () => {
@@ -449,7 +449,7 @@ const Friends = {
           <template #default="{ row }">
             <el-dropdown @command="(cmd) => handleCommand(cmd, row)" trigger="click">
               <el-button type="primary" size="small">操作<el-icon class="el-icon--right"><component is="ArrowDown" /></el-icon></el-button>
-              <template #dropdown><el-dropdown-menu><el-dropdown-item command="send">发送消息</el-dropdown-item><el-dropdown-item command="create">创建任务</el-dropdown-item></el-dropdown-menu></template>
+              <template #dropdown><el-dropdown-menu><el-dropdown-item command="send">发起聊天</el-dropdown-item><el-dropdown-item command="create">创建任务</el-dropdown-item></el-dropdown-menu></template>
             </el-dropdown>
           </template>
         </el-table-column>
@@ -474,6 +474,7 @@ const Friends = {
     </div>
   </div>`,
   setup() {
+    const router = VueRouter.useRouter();
     const loading = ref(false), searchKeyword = ref(''), fireFilter = ref('');
     const isFireActive = (fire) => { if (!fire) return false; const n = Number(fire); return !isNaN(n) ? n > 0 : true; };
     const sendDialogVisible = ref(false), sendLoading = ref(false), sendForm = ref({ name: '', text: '' });
@@ -491,7 +492,7 @@ const Friends = {
       catch (e) { ElMessage.error('加载好友列表失败'); } finally { loading.value = false; }
     };
     const handleSend = async () => { if (!sendForm.value.text.trim()) { ElMessage.warning('请输入消息内容'); return; } sendLoading.value = true; try { await API.sendMessage(sendForm.value.name, sendForm.value.text); ElMessage.success('发送成功'); sendDialogVisible.value = false; } catch (e) { ElMessage.error('发送失败'); } finally { sendLoading.value = false; } };
-    const handleCommand = (cmd, row) => { if (cmd === 'send') { sendForm.value = { name: row.name, text: '' }; sendDialogVisible.value = true; } else if (cmd === 'create') { taskForm.value = { name: row.name, time: '', text: '' }; taskDialogVisible.value = true; } };
+    const handleCommand = (cmd, row) => { if (cmd === 'send') { router.push({ path: '/chat', query: { name: row.name } }); } else if (cmd === 'create') { taskForm.value = { name: row.name, time: '', text: '' }; taskDialogVisible.value = true; } };
     const handleCreateTask = async () => { if (!taskForm.value.time) { ElMessage.warning('请选择时间'); return; } taskLoading.value = true; try { await API.addTask(taskForm.value.time, taskForm.value.name, taskForm.value.text || null); ElMessage.success('创建成功'); taskDialogVisible.value = false; } catch (e) { ElMessage.error('创建失败'); } finally { taskLoading.value = false; } };
     const handleSelectionChange = (rows) => selectedFriends.value = rows;
     const cancelSelection = () => { selectionMode.value = false; selectedFriends.value = []; };
@@ -577,8 +578,7 @@ const Chat = {
 
             <!-- 输入区域 -->
             <div class="chat-input-area">
-              <el-button :icon="ElementPlusIconsVue.Picture" circle @click="toggleStickerPanel"
-                         :type="stickerPanelVisible ? 'primary' : ''" :loading="stickerLoading" />
+              <button class="sticker-btn" @click="toggleStickerPanel" :class="{ active: stickerPanelVisible }" :disabled="stickerLoading" title="表情包">😀</button>
               <el-input v-model="messageText" placeholder="输入消息，回车发送..."
                         @keyup.enter="sendMessage" :disabled="sendLoading"
                         type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
@@ -599,6 +599,7 @@ const Chat = {
     </div>
   </div>`,
   setup() {
+    const route = VueRouter.useRoute();
     const searchKeyword = ref('');
     const currentChat = ref('');
     const currentFriendAvatar = ref('');
@@ -718,6 +719,13 @@ const Chat = {
 
     onMounted(async () => {
       if (friendsList.value.length === 0) await loadFriends();
+      // 从路由参数自动选中好友
+      const targetName = route.query.name;
+      if (targetName) {
+        const friend = friendsList.value.find(f => f.name === targetName);
+        if (friend) await selectFriend(friend);
+        else ElMessage.warning('未找到该好友');
+      }
     });
 
     return {

@@ -612,6 +612,16 @@
         padding: 14px 20px; border-top: 1px solid var(--glass-border);
         background: var(--glass-2); flex-shrink: 0;
       }
+      .sticker-btn {
+        width: 32px; height: 32px; border-radius: 50%; border: none;
+        background: var(--glass-3); cursor: pointer; font-size: 20px;
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0; transition: all var(--dur-fast) var(--ease-out);
+        border: 1px solid var(--glass-border);
+      }
+      .sticker-btn:hover { background: var(--glass-hover); transform: scale(1.1); }
+      .sticker-btn.active { background: var(--gradient-fire-soft); border-color: var(--coral); }
+      .sticker-btn:disabled { opacity: 0.5; cursor: not-allowed; }
       .chat-input-area .el-textarea__inner {
         border-radius: var(--r-md) !important;
         background: var(--glass-3) !important;

@@ -1,4 +1,4 @@
-import re, os, gzip, socket
+import re, os, gzip, socket, random
 from selenium import webdriver
 from selenium.webdriver import Keys
 from selenium.webdriver.edge.service import Service
@@ -242,53 +242,92 @@ class Douyin:
         return False
 
     def Get_Sticker_List(self):
-        """打开表情面板，获取表情包列表"""
+        """打开表情面板，精准获取三个 tab 的表情包"""
         try:
-            # 尝试多种方式找到表情按钮
-            emoji_btn_xpaths = [
-                '//div[contains(@class,"messageEditor")]//*[contains(@class,"emoji") or contains(@class,"sticker") or contains(@data-e2e,"emoji")]',
-                '//div[@class="messageEditorimChatEditorContainer"]//descendant::*[contains(@class,"icon")]',
-                '//div[contains(@class,"chatEditor")]//descendant::*[@title="表情" or @aria-label="表情"]',
-                '//div[contains(@class,"imChatEditor")]//*[contains(@class,"emoji")]',
-            ]
-            emoji_btn = None
-            for xpath in emoji_btn_xpaths:
-                try:
-                    emoji_btn = driver.find_element(By.XPATH, value=xpath)
-                    break
-                except NoSuchElementException:
-                    continue
-            if not emoji_btn:
+            # 1. 点击表情按钮打开面板（按钮在输入框附近，带 emoji/表情 标识）
+            opened = driver.execute_script('''
+                // 表情按钮：常见 class 或属性
+                var candidates = [
+                    '[class*="emojiBtn"]', '[class*="emojiPicker"]',
+                    '[data-e2e*="emoji"]', '[class*="EmojiIcon"]',
+                    '[class*="chatEmoji"]', '[class*="editorEmoji"]',
+                    'button[aria-label*="表情"]', '[title*="表情"]'
+                ];
+                for (var s = 0; s < candidates.length; s++) {
+                    var els = document.querySelectorAll(candidates[s]);
+                    for (var i = 0; i < els.length; i++) {
+                        var rect = els[i].getBoundingClientRect();
+                        if (rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight) {
+                            els[i].click();
+                            return true;
+                        }
+                    }
+                }
+                // 兜底：任何 class 含 emoji 且可见的元素
+                var all = document.querySelectorAll('[class*="emoji"], [class*="Emoji"]');
+                for (var i = 0; i < all.length; i++) {
+                    var rect = all[i].getBoundingClientRect();
+                    if (rect.width > 10 && rect.height > 10 && rect.top < window.innerHeight && rect.top > 50) {
+                        all[i].click();
+                        return true;
+                    }
+                }
+                return false;
+            ''')
+            if not opened:
                 return {'code': 400, 'data': '未找到表情按钮，请确认已进入对话'}
-            emoji_btn.click()
-            time.sleep(1)
-            # 获取表情面板中的表情图片
-            sticker_xpaths = [
-                '//div[contains(@class,"emoji")]//img',
-                '//div[contains(@class,"sticker")]//img',
-                '//div[contains(@class,"popover")]//img',
-                '//div[contains(@class,"panel")]//img[contains(@class,"emoji") or contains(@class,"sticker")]',
-            ]
-            stickers = []
-            for xpath in sticker_xpaths:
-                try:
-                    imgs = driver.find_elements(By.XPATH, value=xpath)
-                    for img in imgs:
-                        src = img.get_attribute('src')
-                        if src and len(src) > 20:
-                            stickers.append(src)
-                    if stickers:
-                        break
-                except:
-                    continue
-            # 关闭表情面板
+            time.sleep(1.5)
+
+            # 2. 逐个点击 tab 并收集表情
+            all_stickers = driver.execute_script('''
+                var result = [];
+                var seen = {};
+                // 获取所有 tab
+                var tabs = document.querySelectorAll('[class*="emojiEmojisModalTabsubTab"]');
+                if (tabs.length === 0) {
+                    // 兜底：面板内所有 img
+                    var imgs = document.querySelectorAll('[class*="emoji"] img, [class*="Emoji"] img, [class*="sticker"] img');
+                    for (var i = 0; i < imgs.length; i++) {
+                        var src = imgs[i].src || '';
+                        if (src && src.length > 20 && !seen[src]) { seen[src] = 1; result.push(src); }
+                    }
+                    return result;
+                }
+                // 逐个点击 tab 收集表情
+                for (var t = 0; t < tabs.length; t++) {
+                    tabs[t].click();
+                    // 等待渲染（同步等待不可用，用一个小延迟）
+                    var start = Date.now();
+                    while (Date.now() - start < 600) {}
+                    // 收集当前 tab 内的表情
+                    var panelImgs = document.querySelectorAll('[class*="emojiEmojisModal"] img, [class*="emojiModalContent"] img, [class*="emojiPanel"] img');
+                    if (panelImgs.length === 0) {
+                        panelImgs = document.querySelectorAll('img');
+                    }
+                    for (var i = 0; i < panelImgs.length; i++) {
+                        var src = panelImgs[i].src || '';
+                        var rect = panelImgs[i].getBoundingClientRect();
+                        if (!src || src.length < 20) continue;
+                        // 过滤：只取表情图片（douyinpic / emoji / 含表情特征）
+                        if (src.indexOf('douyinpic') !== -1 || src.indexOf('emoji') !== -1 ||
+                            src.indexOf('sf-tk') !== -1 || src.indexOf('sticker') !== -1 ||
+                            (rect.width > 20 && rect.width < 200)) {
+                            if (!seen[src]) { seen[src] = 1; result.push(src); }
+                        }
+                    }
+                }
+                return result;
+            ''')
+
+            # 3. 关闭表情面板
             try:
                 from selenium.webdriver.common.action_chains import ActionChains
                 ActionChains(driver).send_keys(Keys.ESCAPE).perform()
             except:
                 pass
-            if stickers:
-                return {'code': 200, 'data': stickers}
+
+            if all_stickers and len(all_stickers) > 0:
+                return {'code': 200, 'data': all_stickers}
             else:
                 return {'code': 400, 'data': '未获取到表情包，抖音页面结构可能已更新'}
         except Exception as e:
@@ -297,45 +336,71 @@ class Douyin:
     def Send_Sticker(self, name: str, sticker_index: int):
         """发送表情包：打开表情面板，点击指定表情，发送"""
         try:
-            # 先进入对话
             if not self.Open_Chat(name):
                 return TrueString(False, '未找到该好友')
             # 打开表情面板
-            emoji_btn_xpaths = [
-                '//div[contains(@class,"messageEditor")]//*[contains(@class,"emoji") or contains(@class,"sticker") or contains(@data-e2e,"emoji")]',
-                '//div[@class="messageEditorimChatEditorContainer"]//descendant::*[contains(@class,"icon")]',
-                '//div[contains(@class,"chatEditor")]//descendant::*[@title="表情" or @aria-label="表情"]',
-            ]
-            emoji_btn = None
-            for xpath in emoji_btn_xpaths:
-                try:
-                    emoji_btn = driver.find_element(By.XPATH, value=xpath)
-                    break
-                except NoSuchElementException:
-                    continue
-            if not emoji_btn:
-                return TrueString(False, '未找到表情按钮')
-            emoji_btn.click()
-            time.sleep(1)
-            # 获取表情元素并点击指定索引
-            sticker_xpaths = [
-                '//div[contains(@class,"emoji")]//img',
-                '//div[contains(@class,"sticker")]//img',
-                '//div[contains(@class,"popover")]//img',
-            ]
-            stickers = []
-            for xpath in sticker_xpaths:
-                try:
-                    stickers = driver.find_elements(By.XPATH, value=xpath)
-                    if stickers:
-                        break
-                except:
-                    continue
-            if not stickers or sticker_index >= len(stickers):
+            driver.execute_script('''
+                var candidates = [
+                    '[class*="emojiBtn"]', '[class*="emojiPicker"]',
+                    '[data-e2e*="emoji"]', '[class*="EmojiIcon"]',
+                    '[class*="chatEmoji"]', '[class*="editorEmoji"]',
+                    'button[aria-label*="表情"]', '[title*="表情"]'
+                ];
+                for (var s = 0; s < candidates.length; s++) {
+                    var els = document.querySelectorAll(candidates[s]);
+                    for (var i = 0; i < els.length; i++) {
+                        var rect = els[i].getBoundingClientRect();
+                        if (rect.width > 0 && rect.height > 0) { els[i].click(); return; }
+                    }
+                }
+                var all = document.querySelectorAll('[class*="emoji"], [class*="Emoji"]');
+                for (var i = 0; i < all.length; i++) {
+                    var rect = all[i].getBoundingClientRect();
+                    if (rect.width > 10 && rect.height > 10 && rect.top < window.innerHeight && rect.top > 50) { all[i].click(); return; }
+                }
+            ''')
+            time.sleep(1.5)
+            # 收集所有 tab 的表情并点击指定索引
+            clicked = driver.execute_script('''
+                var imgs = [];
+                var seen = {};
+                var tabs = document.querySelectorAll('[class*="emojiEmojisModalTabsubTab"]');
+                if (tabs.length > 0) {
+                    for (var t = 0; t < tabs.length; t++) {
+                        tabs[t].click();
+                        var start = Date.now();
+                        while (Date.now() - start < 600) {}
+                        var panelImgs = document.querySelectorAll('[class*="emojiEmojisModal"] img, [class*="emojiModalContent"] img, [class*="emojiPanel"] img');
+                        if (panelImgs.length === 0) panelImgs = document.querySelectorAll('img');
+                        for (var i = 0; i < panelImgs.length; i++) {
+                            var src = panelImgs[i].src || '';
+                            var rect = panelImgs[i].getBoundingClientRect();
+                            if (!src || src.length < 20) continue;
+                            if (src.indexOf('douyinpic') !== -1 || src.indexOf('emoji') !== -1 ||
+                                src.indexOf('sf-tk') !== -1 || src.indexOf('sticker') !== -1 ||
+                                (rect.width > 20 && rect.width < 200)) {
+                                if (!seen[src]) { seen[src] = 1; imgs.push(panelImgs[i]); }
+                            }
+                        }
+                    }
+                } else {
+                    var allImgs = document.querySelectorAll('img');
+                    for (var i = 0; i < allImgs.length; i++) {
+                        var src = allImgs[i].src || '';
+                        var rect = allImgs[i].getBoundingClientRect();
+                        if (!src || src.length < 20) continue;
+                        if (src.indexOf('douyinpic') !== -1 || src.indexOf('emoji') !== -1 ||
+                            src.indexOf('sf-tk') !== -1 || src.indexOf('sticker') !== -1) {
+                            if (!seen[src]) { seen[src] = 1; imgs.push(allImgs[i]); }
+                        }
+                    }
+                }
+                if (imgs.length > arguments[0]) { imgs[arguments[0]].click(); return true; }
+                return false;
+            ''', sticker_index)
+            if not clicked:
                 return TrueString(False, '表情索引无效')
-            stickers[sticker_index].click()
             time.sleep(0.5)
-            # 按回车发送
             seng = driver.find_element(By.XPATH,
                                        value='//div[@class="messageEditorimChatEditorContainer"]/div/div')
             seng.send_keys(Keys.ENTER)
@@ -422,8 +487,8 @@ class APIRewriteMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(APIRewriteMiddleware)
 
-# 密码存储 (内存中，生产环境建议存入文件或数据库)
-_password = '123456'  # 默认密码
+# 密码存储（持久化到 config.json）
+_password = config.get('password', '123456')  # 默认密码
 
 
 def hash_pwd(pwd: str) -> str:
@@ -522,7 +587,18 @@ def Init(authorization: str = Header(None)):
             unban_config()
             driver = webdriver.Edge(service=service, options=options)
             driver.set_window_size(1400, 900)
-            driver.get('https://www.douyin.com/chat?isPopup=1 ')
+            # 设置页面加载策略为 eager（DOM 就绪即可，不等所有资源）
+            try:
+                driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            except Exception:
+                pass
+            # 打开抖音聊天页（设置较短的超时，避免长时间卡住）
+            driver.set_page_load_timeout(30)
+            try:
+                driver.get('https://www.douyin.com/chat?isPopup=1 ')
+            except Exception:
+                # 页面加载超时也继续（SPA 页面可能触发超时但 DOM 已就绪）
+                pass
             douyin = Douyin(driver)
             init = True
             Login_is_bool = False  # 新会话默认未登录
@@ -790,67 +866,75 @@ def GetUserInfo(authorization: str = Header(None)):
         return drv_err
     if Login_is_bool:
         try:
-            page = driver.page_source
             nickname = ''
             avatar = ''
 
-            # 提取昵称 - 尝试多种格式
-            nickname_patterns = [
-                r'\\"nickname\\":\\"([^\\"]+)\\"',
-                r'"nickname":"([^"]+)"',
-                r'nickname["\s]*[:=]["\s]*["\']?([^"\',}\]]+)',
-            ]
-            for pat in nickname_patterns:
-                m = re.search(pat, page)
-                if m:
-                    nickname = m.group(1).strip()
-                    if nickname and len(nickname) > 0:
-                        break
+            # 先从聊天页 DOM 尝试提取
+            try:
+                user_info = driver.execute_script('''
+                    var nick = '', av = '';
+                    var nickEl = document.querySelector('[data-e2e="user-info"] .nickname, .avatar-nickname, .nickname, [class*="userName"], [class*="nickname"]');
+                    if (nickEl && nickEl.textContent) nick = nickEl.textContent.trim();
+                    var imgs = document.querySelectorAll('img');
+                    for (var i = 0; i < imgs.length; i++) {
+                        var src = imgs[i].src || '';
+                        if (src && src.indexOf('douyinpic') !== -1 && (src.indexOf('avatar') !== -1 || src.indexOf('head') !== -1)) { av = src; break; }
+                    }
+                    return {nick: nick, av: av};
+                ''')
+                if user_info:
+                    nickname = user_info.get('nick', '') if isinstance(user_info, dict) else ''
+                    avatar = user_info.get('av', '') if isinstance(user_info, dict) else ''
+            except Exception:
+                pass
 
-            # 提取头像 URL - 尝试多种格式
-            # 1. JSON 格式（转义）
-            avatar_json_patterns = [
-                r'\\"avatar_thumb\\":\{\\"url_list\\":\["([^\\"]+)\\"',
-                r'\\"avatar_medium\\":\{\\"url_list\\":\["([^\\"]+)\\"',
-                r'\\"avatar_larger\\":\{\\"url_list\\":\["([^\\"]+)\\"',
-                r'\\"head_image\\":\\"([^\\"]+)\\"',
-                r'\\"avatar\\":\\"([^\\"]+)\\"',
-            ]
-            for pat in avatar_json_patterns:
-                m = re.search(pat, page)
-                if m:
-                    avatar = m.group(1).replace('\\u002F', '/').replace('\\\\', '\\')
-                    break
-
-            # 2. 如果上面没找到，尝试直接找 Douyin CDN 图片 URL
-            if not avatar:
-                cdn_patterns = [
-                    r'(https://p[0-9]+\-weixin\.douyinpic\.com/[^"\s\}]+)',
-                    r'(https://p[0-9]+\.douyinpic\.com/[^"\s\}]+)',
-                    r'(https://[^"\s]*aweme[^"\s]*\.jpg)',
-                    r'(https://[^"\s]*avatar[^"\s]*\.jpeg)',
-                ]
-                for pat in cdn_patterns:
-                    m = re.search(pat, page)
-                    if m:
-                        candidate = m.group(1)
-                        # 过滤掉非头像相关的 URL
-                        if 'avatar' in candidate.lower() or 'aweme' in candidate.lower() or 'head' in candidate.lower():
-                            avatar = candidate
-                            break
-
-            # 3. 最后尝试从 DOM 中提取（通过 JS 执行）
-            if not avatar:
+            # 聊天页拿不到，去个人主页获取（模拟正常浏览行为，停留随机时间）
+            if not nickname or not avatar:
+                current_url = driver.current_url
                 try:
-                    avatar_js = driver.execute_script('''
-                        var img = document.querySelector('img[src*="douyinpic"], img[src*="avatar"], meta[property="og:image"]');
-                        if (img) return img.src || img.content || '';
-                        return '';
+                    driver.get('https://www.douyin.com/user/self?from_tab_name=main')
+                    # 随机停留 3~6 秒，模拟正常浏览
+                    time.sleep(random.uniform(3, 6))
+                    user_info2 = driver.execute_script('''
+                        var nick = '', av = '';
+                        var h1 = document.querySelector('h1, [data-e2e="user-info"] h1, [class*="nickname"], [class*="userName"]');
+                        if (h1 && h1.textContent) nick = h1.textContent.trim();
+                        var imgs = document.querySelectorAll('img');
+                        for (var i = 0; i < imgs.length; i++) {
+                            var src = imgs[i].src || '';
+                            if (src && src.indexOf('douyinpic') !== -1 && (src.indexOf('avatar') !== -1 || src.indexOf('head') !== -1)) { av = src; break; }
+                        }
+                        return {nick: nick, av: av};
                     ''')
-                    if avatar_js and 'douyinpic' in avatar_js:
-                        avatar = avatar_js
-                except Exception:
-                    pass
+                    if user_info2:
+                        if not nickname:
+                            nickname = user_info2.get('nick', '') if isinstance(user_info2, dict) else ''
+                        if not avatar:
+                            avatar = user_info2.get('av', '') if isinstance(user_info2, dict) else ''
+                finally:
+                    # 回到聊天页（也停留一会，模拟自然切换）
+                    time.sleep(random.uniform(1, 2))
+                    try:
+                        driver.get(current_url)
+                        time.sleep(1.5)
+                    except Exception:
+                        pass
+
+            # 正则兜底
+            if not nickname or not avatar:
+                page = driver.page_source
+                if not nickname:
+                    for pat in [r'\\"nickname\\":\\"([^\\"]+)\\"', r'"nickname":"([^"]+)"']:
+                        m = re.search(pat, page)
+                        if m:
+                            nickname = m.group(1).strip()
+                            break
+                if not avatar:
+                    for pat in [r'\\"avatar_thumb\\":\{\\"url_list\\":\["([^\\"]+)\\"', r'\\"avatar_medium\\":\{\\"url_list\\":\["([^\\"]+)\\"']:
+                        m = re.search(pat, page)
+                        if m:
+                            avatar = m.group(1).replace('\\u002F', '/')
+                            break
 
             if nickname:
                 return {'code': 200, 'data': {'nickname': nickname, 'avatar': avatar}}
@@ -1099,6 +1183,8 @@ def change_password(old_password: str, new_password: str, authorization: str = H
     if hash_pwd(old_password) != hash_pwd(_password):
         return {'code': 400, 'data': '原密码错误'}
     _password = new_password
+    config['password'] = new_password
+    save_config(config)
     return {'code': 200, 'data': '密码修改成功'}
 
 
