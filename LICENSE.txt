@@ -19,3 +19,37 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+=======================================================================
+
+免责声明 / Disclaimer
+
+本软件（TikTokcn-AutoSpark）仅用于学习和研究目的，通过自动化脚本操作抖音
+（Douyin / TikTok China）网页端，实现自动续火花等交互功能。
+
+1. 风险自担：使用者因使用本软件而产生的一切后果（包括但不限于账号被限制、
+   封号、风控、财产损失、数据丢失等）均由使用者本人承担，与软件开发者无关。
+
+2. 违反平台规则：本软件可能涉及违反抖音/TikTok 平台的用户协议或社区规则，
+   使用前请仔细阅读并理解相关平台条款。开发者不对任何因违反平台规则而产生的
+   后果承担责任。
+
+3. 不保证可用性：抖音/TikTok 平台界面及接口随时可能变动，本软件无法保证
+   在所有版本和环境下均能正常运行。开发者不对软件的可用性、准确性或可靠性
+   作出任何保证。
+
+4. 禁止恶意使用：本软件不得用于批量注册、恶意刷量、诈骗、骚扰他人等任何
+   非法或损害他人利益的活动。因上述行为产生的一切后果由使用者自行承担。
+
+5. 法律合规：使用者在下载、使用本软件前，应确保其行为符合所在地区/国家的
+   法律法规。如因使用本软件而违反任何法律，由使用者本人承担全部责任。
+
+下载、安装或使用本软件即表示您已阅读、理解并同意接受上述全部免责条款。
+如您不同意，请立即停止使用并删除本软件。
+
+By downloading, installing, or using this software, you acknowledge that
+you have read and understood the above disclaimer and agree to bear all
+consequences arising from the use of this software, including but not
+limited to account suspension, account ban, risk control, and any other
+losses. If you do not agree, please stop using and delete this software
+immediately.
