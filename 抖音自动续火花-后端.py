@@ -225,6 +225,157 @@ class Douyin:
             except Exception as e:
                 return TrueString(False, e)
 
+    def Open_Chat(self, name: str):
+        """点击好友进入对话窗口"""
+        count = self.Updara_FrinderList()
+        if count == 0:
+            return False
+        try:
+            for index, value in self.friends_xpath_list.items():
+                if index == name:
+                    friend_id = driver.find_element(By.XPATH, value=value)
+                    friend_id.click()
+                    time.sleep(1.5)
+                    return True
+        except:
+            return False
+        return False
+
+    def Get_Sticker_List(self):
+        """打开表情面板，获取表情包列表"""
+        try:
+            # 尝试多种方式找到表情按钮
+            emoji_btn_xpaths = [
+                '//div[contains(@class,"messageEditor")]//*[contains(@class,"emoji") or contains(@class,"sticker") or contains(@data-e2e,"emoji")]',
+                '//div[@class="messageEditorimChatEditorContainer"]//descendant::*[contains(@class,"icon")]',
+                '//div[contains(@class,"chatEditor")]//descendant::*[@title="表情" or @aria-label="表情"]',
+                '//div[contains(@class,"imChatEditor")]//*[contains(@class,"emoji")]',
+            ]
+            emoji_btn = None
+            for xpath in emoji_btn_xpaths:
+                try:
+                    emoji_btn = driver.find_element(By.XPATH, value=xpath)
+                    break
+                except NoSuchElementException:
+                    continue
+            if not emoji_btn:
+                return {'code': 400, 'data': '未找到表情按钮，请确认已进入对话'}
+            emoji_btn.click()
+            time.sleep(1)
+            # 获取表情面板中的表情图片
+            sticker_xpaths = [
+                '//div[contains(@class,"emoji")]//img',
+                '//div[contains(@class,"sticker")]//img',
+                '//div[contains(@class,"popover")]//img',
+                '//div[contains(@class,"panel")]//img[contains(@class,"emoji") or contains(@class,"sticker")]',
+            ]
+            stickers = []
+            for xpath in sticker_xpaths:
+                try:
+                    imgs = driver.find_elements(By.XPATH, value=xpath)
+                    for img in imgs:
+                        src = img.get_attribute('src')
+                        if src and len(src) > 20:
+                            stickers.append(src)
+                    if stickers:
+                        break
+                except:
+                    continue
+            # 关闭表情面板
+            try:
+                from selenium.webdriver.common.action_chains import ActionChains
+                ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+            except:
+                pass
+            if stickers:
+                return {'code': 200, 'data': stickers}
+            else:
+                return {'code': 400, 'data': '未获取到表情包，抖音页面结构可能已更新'}
+        except Exception as e:
+            return {'code': 500, 'data': f'获取表情包失败: {str(e)}'}
+
+    def Send_Sticker(self, name: str, sticker_index: int):
+        """发送表情包：打开表情面板，点击指定表情，发送"""
+        try:
+            # 先进入对话
+            if not self.Open_Chat(name):
+                return TrueString(False, '未找到该好友')
+            # 打开表情面板
+            emoji_btn_xpaths = [
+                '//div[contains(@class,"messageEditor")]//*[contains(@class,"emoji") or contains(@class,"sticker") or contains(@data-e2e,"emoji")]',
+                '//div[@class="messageEditorimChatEditorContainer"]//descendant::*[contains(@class,"icon")]',
+                '//div[contains(@class,"chatEditor")]//descendant::*[@title="表情" or @aria-label="表情"]',
+            ]
+            emoji_btn = None
+            for xpath in emoji_btn_xpaths:
+                try:
+                    emoji_btn = driver.find_element(By.XPATH, value=xpath)
+                    break
+                except NoSuchElementException:
+                    continue
+            if not emoji_btn:
+                return TrueString(False, '未找到表情按钮')
+            emoji_btn.click()
+            time.sleep(1)
+            # 获取表情元素并点击指定索引
+            sticker_xpaths = [
+                '//div[contains(@class,"emoji")]//img',
+                '//div[contains(@class,"sticker")]//img',
+                '//div[contains(@class,"popover")]//img',
+            ]
+            stickers = []
+            for xpath in sticker_xpaths:
+                try:
+                    stickers = driver.find_elements(By.XPATH, value=xpath)
+                    if stickers:
+                        break
+                except:
+                    continue
+            if not stickers or sticker_index >= len(stickers):
+                return TrueString(False, '表情索引无效')
+            stickers[sticker_index].click()
+            time.sleep(0.5)
+            # 按回车发送
+            seng = driver.find_element(By.XPATH,
+                                       value='//div[@class="messageEditorimChatEditorContainer"]/div/div')
+            seng.send_keys(Keys.ENTER)
+            return TrueString(True, None)
+        except Exception as e:
+            return TrueString(False, e)
+
+    def Get_Chat_History(self, name: str):
+        """获取当前对话的聊天记录"""
+        try:
+            if not self.Open_Chat(name):
+                return {'code': 400, 'data': '未找到该好友'}
+            time.sleep(1)
+            # 尝试读取消息列表
+            msg_xpaths = [
+                '//div[contains(@class,"imChatMessage")]//div[contains(@class,"messageContent")]',
+                '//div[contains(@class,"chatMessage")]//div[contains(@class,"content")]',
+                '//div[contains(@class,"imChatBody")]//div[contains(@class,"text")]',
+                '//div[contains(@class,"messageList")]//div[contains(@class,"content")]',
+            ]
+            messages = []
+            for xpath in msg_xpaths:
+                try:
+                    elements = driver.find_elements(By.XPATH, value=xpath)
+                    if elements:
+                        for el in elements:
+                            text = el.text.strip()
+                            if text:
+                                # 判断方向：自己的消息通常有特定 class
+                                parent_class = el.find_element(By.XPATH, '..').get_attribute('class') or ''
+                                is_self = 'self' in parent_class.lower() or 'right' in parent_class.lower() or 'sent' in parent_class.lower()
+                                messages.append({'text': text, 'is_self': is_self})
+                        if messages:
+                            break
+                except:
+                    continue
+            return {'code': 200, 'data': messages}
+        except Exception as e:
+            return {'code': 500, 'data': f'获取聊天记录失败: {str(e)}'}
+
     def Find_Friends(self, name: str):
         count = self.Updara_FrinderList()
         is_find = False
@@ -581,7 +732,55 @@ def Send(name: str, text: str, authorization: str = Header(None)):
         return {'code': 500, 'data': f'发送失败: {str(e)}'}
 
 
-@app.get('/Api/GetUsername')  # 获取用户名
+@app.get('/Api/GetStickerList')  # 获取表情包列表
+def GetStickerList(authorization: str = Header(None)):
+    auth_err = require_auth(authorization)
+    if auth_err:
+        return auth_err
+    drv_err = check_driver()
+    if drv_err:
+        return drv_err
+    try:
+        result = douyin.Get_Sticker_List()
+        return result
+    except Exception as e:
+        return {'code': 500, 'data': f'获取表情包失败: {str(e)}'}
+
+
+@app.get('/Api/SendSticker')  # 发送表情包
+def SendSticker(name: str, sticker_index: int, authorization: str = Header(None)):
+    auth_err = require_auth(authorization)
+    if auth_err:
+        return auth_err
+    drv_err = check_driver()
+    if drv_err:
+        return drv_err
+    try:
+        out = douyin.Send_Sticker(name, sticker_index)
+        if out.is_bool:
+            return {'code': 200, 'data': '表情包发送成功'}
+        else:
+            return {'code': 400, 'data': str(out.string) if out.string else '发送失败'}
+    except Exception as e:
+        return {'code': 500, 'data': f'发送表情包失败: {str(e)}'}
+
+
+@app.get('/Api/GetChatHistory')  # 获取聊天记录
+def GetChatHistory(name: str, authorization: str = Header(None)):
+    auth_err = require_auth(authorization)
+    if auth_err:
+        return auth_err
+    drv_err = check_driver()
+    if drv_err:
+        return drv_err
+    try:
+        result = douyin.Get_Chat_History(name)
+        return result
+    except Exception as e:
+        return {'code': 500, 'data': f'获取聊天记录失败: {str(e)}'}
+
+
+@app.get('/Api/GetUsername')  # 获取用户名和头像
 def GetUserInfo(authorization: str = Header(None)):
     auth_err = require_auth(authorization)
     if auth_err:
@@ -591,16 +790,74 @@ def GetUserInfo(authorization: str = Header(None)):
         return drv_err
     if Login_is_bool:
         try:
-            match = re.search(r'\\"nickname\\":\\"([^\\"]+)\\"', driver.page_source)
-            if match:
-                text = match.group(0)
-                clean = text.replace('\\"', '"')
-                data = json.loads('{' + clean + '}')
-                return {'code': 200, 'data': data['nickname']}
+            page = driver.page_source
+            nickname = ''
+            avatar = ''
+
+            # 提取昵称 - 尝试多种格式
+            nickname_patterns = [
+                r'\\"nickname\\":\\"([^\\"]+)\\"',
+                r'"nickname":"([^"]+)"',
+                r'nickname["\s]*[:=]["\s]*["\']?([^"\',}\]]+)',
+            ]
+            for pat in nickname_patterns:
+                m = re.search(pat, page)
+                if m:
+                    nickname = m.group(1).strip()
+                    if nickname and len(nickname) > 0:
+                        break
+
+            # 提取头像 URL - 尝试多种格式
+            # 1. JSON 格式（转义）
+            avatar_json_patterns = [
+                r'\\"avatar_thumb\\":\{\\"url_list\\":\["([^\\"]+)\\"',
+                r'\\"avatar_medium\\":\{\\"url_list\\":\["([^\\"]+)\\"',
+                r'\\"avatar_larger\\":\{\\"url_list\\":\["([^\\"]+)\\"',
+                r'\\"head_image\\":\\"([^\\"]+)\\"',
+                r'\\"avatar\\":\\"([^\\"]+)\\"',
+            ]
+            for pat in avatar_json_patterns:
+                m = re.search(pat, page)
+                if m:
+                    avatar = m.group(1).replace('\\u002F', '/').replace('\\\\', '\\')
+                    break
+
+            # 2. 如果上面没找到，尝试直接找 Douyin CDN 图片 URL
+            if not avatar:
+                cdn_patterns = [
+                    r'(https://p[0-9]+\-weixin\.douyinpic\.com/[^"\s\}]+)',
+                    r'(https://p[0-9]+\.douyinpic\.com/[^"\s\}]+)',
+                    r'(https://[^"\s]*aweme[^"\s]*\.jpg)',
+                    r'(https://[^"\s]*avatar[^"\s]*\.jpeg)',
+                ]
+                for pat in cdn_patterns:
+                    m = re.search(pat, page)
+                    if m:
+                        candidate = m.group(1)
+                        # 过滤掉非头像相关的 URL
+                        if 'avatar' in candidate.lower() or 'aweme' in candidate.lower() or 'head' in candidate.lower():
+                            avatar = candidate
+                            break
+
+            # 3. 最后尝试从 DOM 中提取（通过 JS 执行）
+            if not avatar:
+                try:
+                    avatar_js = driver.execute_script('''
+                        var img = document.querySelector('img[src*="douyinpic"], img[src*="avatar"], meta[property="og:image"]');
+                        if (img) return img.src || img.content || '';
+                        return '';
+                    ''')
+                    if avatar_js and 'douyinpic' in avatar_js:
+                        avatar = avatar_js
+                except Exception:
+                    pass
+
+            if nickname:
+                return {'code': 200, 'data': {'nickname': nickname, 'avatar': avatar}}
             else:
-                return {'code': 400, 'data': '已登录,但未获取到用户名'}
+                return {'code': 400, 'data': {'nickname': '', 'avatar': ''}, 'msg': '已登录,但未获取到用户名'}
         except Exception as e:
-            return {'code': 500, 'data': f'获取用户名失败: {str(e)}'}
+            return {'code': 500, 'data': f'获取用户信息失败: {str(e)}'}
     else:
         return {'code': 400, 'data': '未登录'}
 
