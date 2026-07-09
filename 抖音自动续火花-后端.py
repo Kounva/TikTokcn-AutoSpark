@@ -25,7 +25,7 @@ CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
 
 def load_config():
     """读取配置文件，不存在则返回默认配置"""
-    default = {'port': 8080}
+    default = {'port': 8080, 'show_browser': True}
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
@@ -63,10 +63,8 @@ config = load_config()
 
 service = Service()
 options = webdriver.EdgeOptions()
-off_ui = False
-off_ui_input = input('是否显示游览器[默认回车不显示,输入任意则显示]:')
-if off_ui_input == "":
-    off_ui = True
+# 默认显示浏览器（无头模式不稳定易崩溃），可通过设置页修改
+off_ui = not config.get('show_browser', True)
 
 import tempfile
 # Edge 临时用户数据目录（用系统临时目录，程序退出后由系统清理）
@@ -364,7 +362,7 @@ def Init(authorization: str = Header(None)):
     if auth_err:
         return auth_err
 
-    global init, driver, douyin
+    global init, driver, douyin, Login_is_bool
 
     with init_lock:  # 加锁，防止重复点击触发多次初始化
         if init:
@@ -376,6 +374,7 @@ def Init(authorization: str = Header(None)):
             driver.get('https://www.douyin.com/chat?isPopup=1 ')
             douyin = Douyin(driver)
             init = True
+            Login_is_bool = False  # 新会话默认未登录
             start_scheduler()  # 启动调度线程
             return {'code': 200, 'data': 'success'}
         except SessionNotCreatedException as e:
@@ -470,6 +469,8 @@ def GetLogin(authorization: str = Header(None)):
         Login_is_bool = False
         return {'code': 200, 'data': 'No'}
     try:
+        # 等待页面加载完成，避免误判（刚初始化时页面还没渲染登录弹窗）
+        time.sleep(1.5)
         driver.find_element(By.XPATH, '//*[@id="douyin_login_comp_flat_panel"]/picture')
         # 找到登录弹窗 = 未登录
         Login_is_bool = False
@@ -805,7 +806,7 @@ def get_time_list(authorization: str = Header(None)):
 def admin_login(username: str, password: str, request: Request = None):
     global _last_login_ip
     if username == 'admin' and hash_pwd(password) == hash_pwd(_password):
-        _last_login_ip = request.client.host if request else '127.0.0.1'
+        _last_login_ip = '127.0.0.1' if request and request.client.host in ('::1', '127.0.0.1') else (request.client.host if request else '127.0.0.1')
         token = generate_token()
         return {'code': 200, 'data': token}
     else:
@@ -868,6 +869,27 @@ def set_port(port: int, authorization: str = Header(None)):
         return {'code': 500, 'data': f'保存失败: {str(e)}'}
 
 
+@app.get('/Api/GetBrowserMode')
+def get_browser_mode(authorization: str = Header(None)):
+    auth_err = require_auth(authorization)
+    if auth_err:
+        return auth_err
+    return {'code': 200, 'data': config.get('show_browser', True)}
+
+
+@app.get('/Api/SetBrowserMode')
+def set_browser_mode(show: bool, authorization: str = Header(None)):
+    auth_err = require_auth(authorization)
+    if auth_err:
+        return auth_err
+    try:
+        config['show_browser'] = show
+        save_config(config)
+        return {'code': 200, 'data': f'浏览器显示模式已保存为 {"显示" if show else "隐藏"}，重启后端后生效'}
+    except Exception as e:
+        return {'code': 500, 'data': f'保存失败: {str(e)}'}
+
+
 # ===== 前端静态文件托管 =====
 if os.path.exists(DIST_DIR):
     # 挂载静态资源目录（如果存在）
@@ -891,18 +913,16 @@ if os.path.exists(DIST_DIR):
 
 if __name__ == "__main__":
     saved_port = config.get('port', 8080)
-    user_input = input(f'Prot[默认回车为{saved_port}]:')
-    preferred = int(user_input) if user_input.strip() else saved_port
 
-    if is_port_in_use(preferred):
-        actual = find_available_port(preferred)
-        print(f'⚠️ 端口 {preferred} 已被占用，自动切换到 {actual}')
-        print(f'   请使用 http://localhost:{actual} 访问')
-        # 更新配置文件，下次启动用新端口
+    if is_port_in_use(saved_port):
+        actual = find_available_port(saved_port)
+        print(f'⚠️ 端口 {saved_port} 已被占用，自动切换到 {actual}')
         config['port'] = actual
         save_config(config)
     else:
-        actual = preferred
+        actual = saved_port
+    print(f'✅ 项目已运行在 {actual} 端口')
+    print(f'🚀 服务已启动：http://localhost:{actual}')
 
     uvicorn.run(
         app,

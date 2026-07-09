@@ -76,6 +76,8 @@ const API = {
   forceLogin: () => api.get('/Api/LoginDebug'),
   getPort: () => api.get('/Api/GetPort'),
   setPort: (port) => api.get('/Api/SetPort', { params: { port } }),
+  getBrowserMode: () => api.get('/Api/GetBrowserMode'),
+  setBrowserMode: (show) => api.get('/Api/SetBrowserMode', { params: { show } }),
   getHome: () => api.get('/Home'),
 };
 
@@ -600,6 +602,19 @@ const Settings = {
         </div>
       </div>
     </div>
+    <div class="glass-shell anim-fade-up stagger-4">
+      <div class="glass-core">
+        <div class="panel-title"><div class="panel-title-icon"><el-icon><component is="Monitor" /></el-icon></div>浏览器显示</div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--glass-2);border-radius:var(--r-sm);border:1px solid var(--glass-border)">
+            <span style="color:var(--text-secondary);font-size:13px">当前模式：</span>
+            <span :style="{ color: browserMode ? 'var(--success)' : 'var(--text-muted)', fontSize: '15px', fontWeight: 700 }">{{ browserMode ? '显示窗口' : '隐藏（无头）' }}</span>
+          </div>
+          <el-switch v-model="browserMode" :loading="browserModeLoading" @change="handleSetBrowserMode" active-text="显示" inactive-text="隐藏" />
+          <span style="color:var(--text-muted);font-size:12px">无头模式易崩溃，建议显示窗口</span>
+        </div>
+      </div>
+    </div>
     <el-dialog v-model="manualDialogVisible" title="手动登录" width="500px" destroy-on-close><el-form :model="manualForm" label-width="120px"><el-form-item label="Base64Cookie"><el-input v-model="manualForm.cookie" type="textarea" :rows="6" placeholder="请输入登录Base64Cookie" /></el-form-item></el-form><template #footer><el-button @click="manualDialogVisible = false">取消</el-button><el-button type="primary" @click="handleManualLogin" :loading="manualLoading">验证登录</el-button></template></el-dialog>
     <el-dialog v-model="cookieDialogVisible" title="获取Cookie" width="400px" destroy-on-close><el-form :model="cookieForm" label-width="100px"><el-form-item label="确认密码"><el-input v-model="cookieForm.password" type="password" placeholder="请输入密码确认" @keyup.enter="handleGetCookie" /></el-form-item></el-form><template #footer><el-button @click="cookieDialogVisible = false">取消</el-button><el-button type="primary" @click="handleGetCookie" :loading="cookieLoading">获取Cookie</el-button></template></el-dialog>
     <el-dialog v-model="phoneDialogVisible" title="验证码登录" width="400px" destroy-on-close><el-form :model="phoneForm" label-width="80px"><el-form-item label="手机号"><div style="display:flex;gap:8px"><el-input v-model="phoneForm.areacode" placeholder="+86" style="width:70px;flex-shrink:0" @keyup.enter="handleSendCode" /><el-input v-model="phoneForm.phone" placeholder="请输入手机号" style="flex:1" @keyup.enter="handleSendCode" /></div></el-form-item><el-form-item label="验证码"><div style="display:flex;gap:10px"><el-input v-model="phoneForm.code" placeholder="请输入验证码" style="flex:1" @keyup.enter="handlePhoneLogin" /><el-button @click="handleSendCode" :disabled="codeCountdown > 0" :loading="codeLoading">{{ codeCountdown > 0 ? codeCountdown + 's' : '发送验证码' }}</el-button></div></el-form-item></el-form><template #footer><el-button @click="phoneDialogVisible = false">取消</el-button><el-button type="primary" @click="handlePhoneLogin" :loading="phoneLoading">登录</el-button></template></el-dialog>
@@ -619,6 +634,7 @@ const Settings = {
     const phoneDialogVisible = ref(false), phoneLoading = ref(false), codeLoading = ref(false), codeCountdown = ref(0);
     const phoneForm = ref({ areacode: '+86', phone: '', code: '' });
     const currentPort = ref(8080), portForm = ref({ new_port: '' }), portLoading = ref(false);
+    const browserMode = ref(true), browserModeLoading = ref(false);
 
     const fetchLastLoginIP = async () => { try { const res = await API.getLastLoginIP(); if (res.code == 200) { lastLoginIP.value = res.data || '无'; localStorage.setItem('douyin_last_login_ip', lastLoginIP.value); } } catch (e) { lastLoginIP.value = '获取失败'; } };
     const fetchUsername = async () => { try { const res = await API.getUsername(); if (res.code == 200) { username.value = res.data; usernameLoaded.value = true; localStorage.setItem('douyin_username', res.data); localStorage.setItem('douyin_username_loaded', '1'); } } catch (e) {} };
@@ -637,12 +653,14 @@ const Settings = {
     const handleForceLogin = async () => { try { const res = await API.forceLogin(); if (res.code == 200) ElMessage.success(res.data || '强制登录状态成功'); else ElMessage.error(res.data || '强制登录状态失败'); } catch (e) { ElMessage.error('强制登录状态失败'); } };
     const fetchPort = async () => { try { const res = await API.getPort(); if (res.code == 200) currentPort.value = res.data; } catch (e) {} };
     const handleSetPort = async () => { const p = parseInt(portForm.value.new_port); if (!p) { ElMessage.warning('请输入端口号'); return; } if (p < 1 || p > 65535) { ElMessage.warning('端口范围 1-65535'); return; } portLoading.value = true; try { const res = await API.setPort(p); if (res.code == 200) { ElMessage.success(res.data || '保存成功，重启后端后生效'); currentPort.value = p; portForm.value.new_port = ''; } else ElMessage.error(res.data || '保存失败'); } catch (e) { ElMessage.error('保存失败'); } finally { portLoading.value = false; } };
+    const fetchBrowserMode = async () => { try { const res = await API.getBrowserMode(); if (res.code == 200) browserMode.value = res.data; } catch (e) {} };
+    const handleSetBrowserMode = async () => { browserModeLoading.value = true; try { const res = await API.setBrowserMode(browserMode.value); if (res.code == 200) ElMessage.success(res.data || '保存成功，重启后端后生效'); else { ElMessage.error(res.data || '保存失败'); browserMode.value = !browserMode.value; } } catch (e) { ElMessage.error('保存失败'); browserMode.value = !browserMode.value; } finally { browserModeLoading.value = false; } };
     const handleLogin = async () => { loginLoading.value = true; loading.value = true; qrcodeUrl.value = ''; qrDialogVisible.value = true; try { await API.initBrowser(); const res = await API.getLoginPng(); if (res.data) { qrcodeUrl.value = res.data; ElMessage.success('请使用抖音App扫码登录'); } else { ElMessage.error('获取二维码失败'); qrDialogVisible.value = false; } } catch (e) { ElMessage.error('登录初始化失败，请确保浏览器已启动'); qrDialogVisible.value = false; } finally { loginLoading.value = false; loading.value = false; } };
 
-    onMounted(async () => { if (!settingsLoaded.value) { await checkLoginStatus(); await fetchLastLoginIP(); localStorage.setItem('douyin_settings_loaded', '1'); } await fetchPort(); });
+    onMounted(async () => { if (!settingsLoaded.value) { await checkLoginStatus(); await fetchLastLoginIP(); localStorage.setItem('douyin_settings_loaded', '1'); } await fetchPort(); await fetchBrowserMode(); });
     onActivated(async () => { lastLoginIP.value = localStorage.getItem('douyin_last_login_ip') || '加载中...'; });
 
-    return { loginLoading, refreshLoading, checkLoading, refreshStatusLoading, qrDialogVisible, qrcodeUrl, loading, manualDialogVisible, manualLoading, manualForm, username, passwordDialogVisible, passwordLoading, passwordForm, lastLoginIP, cookieDialogVisible, cookieLoading, cookieForm, screenshotLoading, screenshotUrl, screenshotPreviewVisible, phoneDialogVisible, phoneLoading, codeLoading, codeCountdown, phoneForm, currentPort, portForm, portLoading, handleLogin, handleRefreshStatus, handleCheckLogin, handleRefreshCode, handleManualLogin, handleChangePassword, handleGetCookie, handleDieLogin, handleSendCode, handlePhoneLogin, handleGetScreenshot, handleForceLogin, handleSetPort, loginStatus, ElementPlusIconsVue };
+    return { loginLoading, refreshLoading, checkLoading, refreshStatusLoading, qrDialogVisible, qrcodeUrl, loading, manualDialogVisible, manualLoading, manualForm, username, passwordDialogVisible, passwordLoading, passwordForm, lastLoginIP, cookieDialogVisible, cookieLoading, cookieForm, screenshotLoading, screenshotUrl, screenshotPreviewVisible, phoneDialogVisible, phoneLoading, codeLoading, codeCountdown, phoneForm, currentPort, portForm, portLoading, browserMode, browserModeLoading, handleSetBrowserMode, handleLogin, handleRefreshStatus, handleCheckLogin, handleRefreshCode, handleManualLogin, handleChangePassword, handleGetCookie, handleDieLogin, handleSendCode, handlePhoneLogin, handleGetScreenshot, handleForceLogin, handleSetPort, loginStatus, ElementPlusIconsVue };
   }
 };
 
