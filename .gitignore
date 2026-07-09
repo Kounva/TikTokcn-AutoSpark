@@ -1,30 +1,8 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-*.egg-info/
-
-# Edge 浏览器临时数据（含敏感登录信息，禁止上传）
-edge_profile/
-edge_spark_*/
-
 # 用户配置（含本地端口设置）
 config.json
 
 # IDE
 .idea/
 .vscode/
-*.swp
 
-# 系统
-.DS_Store
-Thumbs.db
-
-# 日志
-*.log
-
-# 旧构建工具链（已废弃，不再使用）
-node_modules/
 dist/lib/
