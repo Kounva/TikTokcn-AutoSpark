@@ -10,3 +10,17 @@ edge_user_data/
 .vscode/
 
 dist/lib/
+
+/浏览器内核技改方案.md
+
+/HQ.txt
+
+/fix.txt
+
+/debug-chat-sticker-sync.md
+
+/.dbg/
+
+/risk_state.json
+
+/__pycache__

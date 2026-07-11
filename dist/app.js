@@ -1,4 +1,4 @@
-const { createApp, ref, reactive, computed, onMounted, watch } = Vue;
+const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch } = Vue;
 const onActivated = Vue.onActivated || function(fn) {};
 const { createRouter, createWebHistory } = VueRouter;
 const { ElMessage, ElMessageBox } = ElementPlus;
@@ -78,9 +78,15 @@ const API = {
   setPort: (port) => api.get('/Api/SetPort', { params: { port } }),
   getBrowserMode: () => api.get('/Api/GetBrowserMode'),
   setBrowserMode: (show) => api.get('/Api/SetBrowserMode', { params: { show } }),
+  getBrowserConfig: () => api.get('/Api/GetBrowserConfig'),
+  setBrowserConfig: (browser_name, browser_path) => api.get('/Api/SetBrowserConfig', { params: { browser_name, browser_path } }),
+  getRiskConfig: () => api.get('/Api/GetRiskConfig'),
+  setRiskConfig: (payload) => api.post('/Api/SetRiskConfig', payload),
+  getRiskStatus: () => api.get('/Api/GetRiskStatus'),
+  resumeRisk: () => api.post('/Api/ResumeRisk'),
   getStickerList: () => api.get('/Api/GetStickerList'),
-  sendSticker: (name, sticker_index) => api.get('/Api/SendSticker', { params: { name, sticker_index } }),
-  getChatHistory: (name) => api.get('/Api/GetChatHistory', { params: { name } }),
+  sendSticker: (name, sticker_index, sticker_src) => api.get('/Api/SendSticker', { params: { name, sticker_index, sticker_src }, timeout: 30000 }),
+  getChatHistory: (name) => api.get('/Api/GetChatHistory', { params: { name }, timeout: 30000 }),
   getHome: () => api.get('/Home'),
 };
 
@@ -91,7 +97,9 @@ const friendsList = ref([]);
 const hasLoaded = ref(false);
 const homeLoaded = ref(false);
 const douyinAvatar = ref(localStorage.getItem('douyin_avatar') || '');
-const douyinNickname = ref(localStorage.getItem('douyin_username') || '');
+let _savedNick = localStorage.getItem('douyin_username');
+if (_savedNick === '未知用户' || _savedNick === '抖音') { localStorage.removeItem('douyin_username'); _savedNick = ''; }
+const douyinNickname = ref(_savedNick || '');
 const setBrowserStatus = (s) => browserStatus.value = s;
 const setLoginStatus = (s) => loginStatus.value = s;
 const setFriendsList = (l) => { friendsList.value = l; hasLoaded.value = true; };
@@ -241,7 +249,13 @@ const Layout = {
           </el-dropdown>
         </div>
       </header>
-      <div class="page-body"><router-view v-slot="{ Component }"><transition name="fade" mode="out-in"><component :is="Component" /></transition></router-view></div>
+      <div class="page-body">
+        <router-view v-slot="{ Component }">
+          <keep-alive :include="cachedViews">
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
+      </div>
     </div>
   </div>`,
   setup() {
@@ -257,9 +271,12 @@ const Layout = {
     };
     const toggleSidebar = () => { if (isMobile.value) sidebarVisible.value = !sidebarVisible.value; else isCollapsed.value = !isCollapsed.value; };
     const closeSidebar = () => { if (isMobile.value) sidebarVisible.value = false; };
+    const fetchDouyinUser = () => { API.getUsername().then(res => { if (res.code == 200 && res.data && res.data.nickname) setDouyinUser(res.data.nickname, res.data.avatar || ''); }).catch(() => {}); };
     onMounted(() => { checkMobile(); window.addEventListener('resize', checkMobile);
-      if (loginStatus.value && !douyinNickname.value) { API.getUsername().then(res => { if (res.code == 200 && res.data) setDouyinUser(res.data.nickname || '', res.data.avatar || ''); }).catch(() => {}); }
+      if (loginStatus.value && !douyinNickname.value) fetchDouyinUser();
     });
+    let _userRetryTimer = null;
+    Vue.watch(loginStatus, (val) => { if (val && !douyinNickname.value) { clearTimeout(_userRetryTimer); _userRetryTimer = setTimeout(fetchDouyinUser, 1500); } });
     const menuList = [
       { path: '/home', title: '首页', icon: 'House' },
       { path: '/friends', title: '好友列表', icon: 'User' },
@@ -267,6 +284,7 @@ const Layout = {
       { path: '/tasks', title: '定时任务', icon: 'Clock' },
       { path: '/settings', title: '设置', icon: 'Setting' }
     ];
+    const cachedViews = ['Friends', 'Chat', 'Tasks'];
     const activeMenu = computed(() => route.path);
     const currentMenuTitle = computed(() => { const m = menuList.find(i => i.path === activeMenu.value); return m ? m.title : ''; });
     const handleMenuSelect = (path) => { router.push(path); if (isMobile.value) sidebarVisible.value = false; };
@@ -278,7 +296,7 @@ const Layout = {
         }).catch(() => {});
       }
     };
-    return { isCollapsed, isMobile, sidebarVisible, toggleSidebar, closeSidebar, menuList, activeMenu, currentMenuTitle, handleMenuSelect, handleCommand, userStore, browserStatus, douyinAvatar, douyinNickname };
+    return { isCollapsed, isMobile, sidebarVisible, toggleSidebar, closeSidebar, menuList, cachedViews, activeMenu, currentMenuTitle, handleMenuSelect, handleCommand, userStore, browserStatus, douyinAvatar, douyinNickname };
   }
 };
 
@@ -292,22 +310,22 @@ const Home = {
     </div>
     <div class="stats-row">
       <div class="stat-tile anim-fade-up stagger-1" :style="{ cursor: initLoading ? 'wait' : 'pointer', opacity: initLoading ? 0.6 : 1 }" @click="initBrowser">
-        <div class="stat-tile-icon coral"><el-icon><component is="Monitor" /></el-icon></div>
+        <div class="stat-tile-icon accent"><el-icon><component is="Monitor" /></el-icon></div>
         <div class="stat-tile-label">浏览器状态</div>
         <div class="stat-tile-value">{{ initLoading ? '初始化中...' : (browserStatus ? '已初始化' : '未初始化') }}<span class="status-pill" :class="browserStatus ? 'online' : 'offline'"></span></div>
       </div>
       <div class="stat-tile anim-fade-up stagger-2">
-        <div class="stat-tile-icon amber"><el-icon><component is="Key" /></el-icon></div>
+        <div class="stat-tile-icon purple"><el-icon><component is="Key" /></el-icon></div>
         <div class="stat-tile-label">登录状态</div>
         <div class="stat-tile-value">{{ loginStatus ? '已登录' : '未登录' }}<span class="status-pill" :class="loginStatus ? 'online' : 'offline'"></span></div>
       </div>
       <div class="stat-tile anim-fade-up stagger-3">
-        <div class="stat-tile-icon green"><el-icon><component is="User" /></el-icon></div>
+        <div class="stat-tile-icon mint"><el-icon><component is="User" /></el-icon></div>
         <div class="stat-tile-label">好友数量</div>
         <div class="stat-tile-value">{{ friendsCount }} <span style="font-size:14px;color:var(--text-muted)">人</span></div>
       </div>
       <div class="stat-tile anim-fade-up stagger-4" style="cursor:pointer" @click="$router.push('/tasks')">
-        <div class="stat-tile-icon blue"><el-icon><component is="Clock" /></el-icon></div>
+        <div class="stat-tile-icon cyan"><el-icon><component is="Clock" /></el-icon></div>
         <div class="stat-tile-label">定时任务</div>
         <div class="stat-tile-value">{{ taskCount }} <span style="font-size:14px;color:var(--text-muted)">个</span></div>
       </div>
@@ -319,22 +337,22 @@ const Home = {
             <div class="panel-title"><div class="panel-title-icon"><el-icon><component is="Operation" /></el-icon></div>快速操作</div>
             <div class="action-grid">
               <div class="action-tile" :style="{ opacity: initLoading ? 0.6 : 1, cursor: initLoading ? 'wait' : 'pointer' }" @click="initBrowser">
-                <div class="action-tile-icon coral"><el-icon><component is="Monitor" /></el-icon></div>
+                <div class="action-tile-icon accent"><el-icon><component is="Monitor" /></el-icon></div>
                 <div class="action-tile-label">{{ initLoading ? '初始化中...' : '初始化浏览器' }}</div>
                 <div class="action-tile-hint">启动自动化环境</div>
               </div>
               <div class="action-tile" @click="refreshFriends">
-                <div class="action-tile-icon amber"><el-icon><component is="Refresh" /></el-icon></div>
+                <div class="action-tile-icon purple"><el-icon><component is="Refresh" /></el-icon></div>
                 <div class="action-tile-label">刷新好友列表</div>
                 <div class="action-tile-hint">更新好友数据</div>
               </div>
               <div class="action-tile" @click="$router.push('/tasks')">
-                <div class="action-tile-icon green"><el-icon><component is="Clock" /></el-icon></div>
+                <div class="action-tile-icon mint"><el-icon><component is="Clock" /></el-icon></div>
                 <div class="action-tile-label">管理任务</div>
                 <div class="action-tile-hint">添加或修改</div>
               </div>
               <div class="action-tile" @click="$router.push('/settings')">
-                <div class="action-tile-icon blue"><el-icon><component is="Setting" /></el-icon></div>
+                <div class="action-tile-icon cyan"><el-icon><component is="Setting" /></el-icon></div>
                 <div class="action-tile-label">系统设置</div>
                 <div class="action-tile-hint">配置账户</div>
               </div>
@@ -350,10 +368,25 @@ const Home = {
             <div class="info-row"><span class="info-row-label">运行时间</span><span class="info-row-value" style="color:var(--success)">{{ uptime }}</span></div>
             <div class="info-row"><span class="info-row-label">后端地址</span><span class="info-row-value">{{ backendPort }}</span></div>
             <div class="info-row"><span class="info-row-label">运行状态</span><el-tag :type="browserStatus && loginStatus ? 'success' : 'warning'" size="small">{{ browserStatus && loginStatus ? '正常' : '待初始化' }}</el-tag></div>
+            <div class="info-row"><span class="info-row-label">自动任务</span><el-tag :type="riskStatus.paused ? 'danger' : 'success'" size="small">{{ riskStatus.paused ? '已暂停' : '运行中' }}</el-tag></div>
+            <div class="info-row"><span class="info-row-label">今日发送</span><span class="info-row-value">{{ riskStatus.today_send_count || 0 }} 次</span></div>
           </div>
         </div>
       </el-col>
     </el-row>
+    <div class="glass-shell anim-fade-up stagger-4" style="margin-bottom:24px">
+      <div class="glass-core">
+        <div class="panel-title"><div class="panel-title-icon"><el-icon><component is="Warning" /></el-icon></div>风险状态</div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+          <el-tag :type="riskStatus.paused ? 'danger' : 'success'" effect="dark">{{ riskStatus.paused ? '自动任务已暂停' : '自动任务正常' }}</el-tag>
+          <span style="color:var(--text-secondary);font-size:13px">连续失败：{{ riskStatus.consecutive_failures || 0 }} / {{ riskStatus.max_consecutive_failures || 0 }}</span>
+          <span style="color:var(--text-secondary);font-size:13px">随机延迟：{{ riskStatus.task_jitter_minutes || 0 }} 分钟</span>
+        </div>
+        <div v-if="riskStatus.pause_reason" style="color:var(--danger);font-size:13px;line-height:1.6">{{ riskStatus.pause_reason }}</div>
+        <div v-else-if="riskStatus.last_error" style="color:var(--warning);font-size:13px;line-height:1.6">{{ riskStatus.last_error }}</div>
+        <div v-else style="color:var(--text-muted);font-size:13px">暂未检测到异常，系统会自动记录发送结果并在连续失败时暂停任务。</div>
+      </div>
+    </div>
     <div class="glass-shell anim-fade-up stagger-4">
       <div class="glass-core">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
@@ -372,12 +405,16 @@ const Home = {
           <el-table-column prop="next_run" label="下次执行" min-width="180">
             <template #default="{ row }"><span style="color:var(--text-secondary);font-size:13px">{{ row.next_run || '未设置' }}</span></template>
           </el-table-column>
+          <el-table-column prop="last_result" label="最近结果" min-width="140">
+            <template #default="{ row }"><span :style="{ color: row.last_result && row.last_result.includes('成功') ? 'var(--success)' : 'var(--text-secondary)', fontSize: '13px' }">{{ row.last_result || '未执行' }}</span></template>
+          </el-table-column>
         </el-table>
       </div>
     </div>
   </div>`,
   setup() {
     const friendsCount = ref(0), taskCount = ref(0), recentTasks = ref([]), initLoading = ref(false), uptime = ref('--');
+    const riskStatus = reactive({ paused: false, pause_reason: '', last_error: '', consecutive_failures: 0, max_consecutive_failures: 0, today_send_count: 0, task_jitter_minutes: 0 });
     const backendPort = 'http://127.0.0.1:' + (window.location.port || '8088');
     const formatUptime = (st) => {
       const s = new Date(st), n = new Date(), d = Math.floor((n - s) / 1000);
@@ -400,26 +437,31 @@ const Home = {
       }
     };
     const loadTaskList = async () => { try { const res = await API.getTaskList(); taskCount.value = res.data.count || 0; recentTasks.value = res.data.tasks?.slice(0, 5) || []; localStorage.setItem('douyin_tasks', JSON.stringify(res.data.tasks || [])); } catch (e) {} };
+    const loadRiskStatus = async () => { try { const res = await API.getRiskStatus(); if (res.code === 200 && res.data) Object.assign(riskStatus, res.data); } catch (e) {} };
     const initBrowser = async () => {
       if (initLoading.value) return;  // 防止重复点击
       initLoading.value = true;
       try { const res = await API.initBrowser(); if (res.code === 200) { browserStatus.value = true; setBrowserStatus(true); setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); ElMessage.success('浏览器初始化成功'); await checkLoginStatus(true); if (!loginStatus.value) ElMessageBox.confirm('浏览器初始化成功，但您还未登录抖音账号，是否前往登录？', '提示', { confirmButtonText: '前往登录', cancelButtonText: '稍后', type: 'warning' }).then(() => window.location.href = '/settings').catch(() => {}); } }
       catch (e) { ElMessage.error('浏览器初始化失败'); } finally { initLoading.value = false; }
     };
+    let _uptimeTimer = null;
+    const startUptime = (startTime) => { if (_uptimeTimer) clearInterval(_uptimeTimer); uptime.value = formatUptime(startTime); _uptimeTimer = setInterval(() => uptime.value = formatUptime(startTime), 1000); };
     onMounted(async () => {
       if (!homeLoaded.value) {
         await checkBrowserStatus(); await checkLoginStatus();
-        if (browserStatus.value && loginStatus.value) { await refreshFriends(); await loadTaskList(); }
-        try { const res = await API.getHome(); if (res.time) { localStorage.setItem('douyin_start_time', res.time); uptime.value = formatUptime(res.time); setInterval(() => uptime.value = formatUptime(res.time), 1000); } } catch (e) { uptime.value = '获取失败'; }
+        if (browserStatus.value && loginStatus.value) { await refreshFriends(); await loadTaskList(); await loadRiskStatus(); }
+        try { const res = await API.getHome(); if (res.time) { localStorage.setItem('douyin_start_time', res.time); startUptime(res.time); } } catch (e) { uptime.value = '获取失败'; }
         setHomeLoaded();
-      } else { friendsCount.value = friendsList.value.length; const t = JSON.parse(localStorage.getItem('douyin_tasks') || '[]'); taskCount.value = t.length; recentTasks.value = t.slice(0, 5); const st = localStorage.getItem('douyin_start_time'); if (st) { uptime.value = formatUptime(st); setInterval(() => uptime.value = formatUptime(st), 1000); } }
+      } else { friendsCount.value = friendsList.value.length; const t = JSON.parse(localStorage.getItem('douyin_tasks') || '[]'); taskCount.value = t.length; recentTasks.value = t.slice(0, 5); const st = localStorage.getItem('douyin_start_time'); if (st) startUptime(st); await loadRiskStatus(); }
     });
-    return { friendsCount, taskCount, recentTasks, initLoading, uptime, backendPort, browserStatus, loginStatus, initBrowser, refreshFriends };
+    onUnmounted(() => { if (_uptimeTimer) clearInterval(_uptimeTimer); });
+    return { friendsCount, taskCount, recentTasks, initLoading, uptime, backendPort, browserStatus, loginStatus, riskStatus, initBrowser, refreshFriends };
   }
 };
 
 // ===== Friends Component =====
 const Friends = {
+  name: 'Friends',
   template: `
   <div class="glass-shell anim-fade-up">
     <div class="glass-core">
@@ -461,7 +503,7 @@ const Friends = {
         <template #footer><el-button @click="sendDialogVisible = false">取消</el-button><el-button type="primary" @click="handleSend" :loading="sendLoading">发送</el-button></template>
       </el-dialog>
       <el-dialog v-model="taskDialogVisible" title="创建定时任务" width="500px" destroy-on-close append-to-body>
-        <el-form :model="taskForm" label-width="80px"><el-form-item label="好友"><el-input v-model="taskForm.name" disabled /></el-form-item><el-form-item label="执行时间"><el-time-picker v-model="taskForm.time" format="HH:mm" value-format="HH:mm" placeholder="选择时间" style="width:100%" /></el-form-item><el-form-item label="消息内容"><el-input v-model="taskForm.text" type="textarea" :rows="3" placeholder="留空将使用每日名言" /></el-form-item></el-form>
+        <el-form :model="taskForm" label-width="80px"><el-form-item label="好友"><el-input v-model="taskForm.name" disabled /></el-form-item><el-form-item label="执行时间"><el-time-picker v-model="taskForm.time" format="HH:mm" value-format="HH:mm" placeholder="选择时间" style="width:100%" /></el-form-item><el-form-item label="消息内容"><el-input v-model="taskForm.text" type="textarea" :rows="3" placeholder="留空使用全局模板池；多条模板可用 || 或换行分隔" /></el-form-item></el-form>
         <template #footer><el-button @click="taskDialogVisible = false">取消</el-button><el-button type="primary" @click="handleCreateTask" :loading="taskLoading">创建</el-button></template>
       </el-dialog>
       <el-dialog v-model="batchTaskDialogVisible" title="批量创建定时任务" width="600px" destroy-on-close append-to-body>
@@ -469,7 +511,7 @@ const Friends = {
           <span style="font-weight:500;margin-right:8px">已选 ({{ selectedFriends.length }})：</span>
           <el-tag v-for="f in selectedFriends" :key="f.name" style="margin:4px">{{ f.name }}</el-tag>
         </div><el-divider />
-        <el-form :model="batchTaskForm" label-width="80px"><el-form-item label="执行时间"><el-time-picker v-model="batchTaskForm.time" format="HH:mm" value-format="HH:mm" placeholder="选择时间" style="width:100%" /></el-form-item><el-form-item label="消息内容"><el-input v-model="batchTaskForm.text" type="textarea" :rows="3" placeholder="留空将使用每日名言" /></el-form-item></el-form>
+        <el-form :model="batchTaskForm" label-width="80px"><el-form-item label="执行时间"><el-time-picker v-model="batchTaskForm.time" format="HH:mm" value-format="HH:mm" placeholder="选择时间" style="width:100%" /></el-form-item><el-form-item label="消息内容"><el-input v-model="batchTaskForm.text" type="textarea" :rows="3" placeholder="留空使用全局模板池；多条模板可用 || 或换行分隔" /></el-form-item></el-form>
         <template #footer><el-button @click="batchTaskDialogVisible = false">取消</el-button><el-button type="primary" @click="handleBatchCreateTask" :loading="batchTaskLoading">批量创建 ({{ selectedFriends.length }})</el-button></template>
       </el-dialog>
     </div>
@@ -505,6 +547,7 @@ const Friends = {
 
 // ===== Chat Component =====
 const Chat = {
+  name: 'Chat',
   template: `
   <div class="glass-shell anim-fade-up chat-shell">
     <div class="glass-core chat-core">
@@ -568,11 +611,22 @@ const Chat = {
                   <el-icon class="is-loading" style="font-size:24px"><component is="Loading" /></el-icon>
                   <span style="margin-left:8px">加载表情包中...</span>
                 </div>
-                <div v-else-if="stickerList.length > 0" class="sticker-grid">
-                  <div v-for="(src, i) in stickerList" :key="i" class="sticker-item" @click="sendSticker(i)">
-                    <img :src="src" :alt="'表情' + (i+1)" loading="lazy" />
+                <template v-else-if="stickerCategories.length > 0">
+                  <div class="sticker-tabs">
+                    <div v-for="(cat, i) in stickerCategories" :key="i"
+                         class="sticker-tab" :class="{active: activeStickerTab === i}"
+                         @click="activeStickerTab = i">
+                      <span v-if="cat.icon_html" class="sticker-tab-icon" v-html="cat.icon_html"></span>
+                      <span v-else>{{ cat.label }}</span>
+                    </div>
                   </div>
-                </div>
+                  <div class="sticker-grid">
+                    <div v-for="(src, j) in stickerCategories[activeStickerTab]?.stickers || []" :key="j"
+                         class="sticker-item" @click="sendSticker(src)">
+                      <img :src="src" :alt="'表情' + (j+1)" loading="lazy" />
+                    </div>
+                  </div>
+                </template>
                 <el-empty v-else description="未获取到表情包" :image-size="50" />
               </div>
             </transition>
@@ -607,7 +661,8 @@ const Chat = {
     const chatMessages = ref([]);
     const messageText = ref('');
     const stickerPanelVisible = ref(false);
-    const stickerList = ref([]);
+    const stickerCategories = ref([]);
+    const activeStickerTab = ref(0);
     const stickerLoading = ref(false);
     const stickerLoaded = ref(false);
     const sendLoading = ref(false);
@@ -635,7 +690,9 @@ const Chat = {
       }, 50);
     };
 
-    const selectFriend = async (friend) => {
+    const selectFriend = async (friend, forceReload = false) => {
+      if (!friend) return;
+      if (!forceReload && currentChat.value === friend.name) return;
       currentChat.value = friend.name;
       currentFriendAvatar.value = friend.avatar || '';
       chatMessages.value = [];
@@ -682,11 +739,12 @@ const Chat = {
       stickerLoading.value = true;
       try {
         const res = await API.getStickerList();
-        if (res.code === 200 && Array.isArray(res.data)) {
-          stickerList.value = res.data;
+        if (res.code == 200) {
+          stickerCategories.value = res.data || [];
+          activeStickerTab.value = 0;
           stickerLoaded.value = true;
         } else {
-          stickerList.value = [];
+          stickerCategories.value = [];
           ElMessage.warning(res.data || '未获取到表情包');
         }
       } catch (e) {
@@ -703,35 +761,39 @@ const Chat = {
       }
     };
 
-    const sendSticker = async (index) => {
-      if (!currentChat.value || sendLoading.value) return;
-      sendLoading.value = true;
+    const sendSticker = async (src) => {
+      if (!currentChat.value) return;
       stickerPanelVisible.value = false;
       try {
-        await API.sendSticker(currentChat.value, index);
+        await API.sendSticker(currentChat.value, 0, src || '');
         ElMessage.success('表情包已发送');
         await loadChatHistory();
       } catch (e) {
-        ElMessage.error('表情包发送失败');
+        if (!e || !e.message) ElMessage.error('表情包发送失败');
       } finally {
         sendLoading.value = false;
       }
     };
 
+    const syncRouteTarget = async () => {
+      const targetName = typeof route.query.name === 'string' ? route.query.name : '';
+      if (!targetName) return;
+      if (friendsList.value.length === 0 && !friendsLoading.value) await loadFriends();
+      const friend = friendsList.value.find(f => f.name === targetName);
+      if (friend) await selectFriend(friend);
+      else ElMessage.warning('未找到该好友');
+    };
+
     onMounted(async () => {
       if (friendsList.value.length === 0) await loadFriends();
-      // 从路由参数自动选中好友
-      const targetName = route.query.name;
-      if (targetName) {
-        const friend = friendsList.value.find(f => f.name === targetName);
-        if (friend) await selectFriend(friend);
-        else ElMessage.warning('未找到该好友');
-      }
+      await syncRouteTarget();
     });
+    onActivated(async () => { await syncRouteTarget(); });
+    watch(() => route.query.name, async () => { await syncRouteTarget(); });
 
     return {
       searchKeyword, currentChat, currentFriendAvatar, chatMessages, messageText,
-      stickerPanelVisible, stickerList, stickerLoading, sendLoading, historyLoading,
+      stickerPanelVisible, stickerCategories, activeStickerTab, stickerLoading, sendLoading, historyLoading,
       friendsLoading, messagesContainer, filteredFriends, isFireActive,
       loadFriends, selectFriend, loadChatHistory, sendMessage,
       toggleStickerPanel, sendSticker, douyinAvatar, ElementPlusIconsVue
@@ -741,6 +803,7 @@ const Chat = {
 
 // ===== Tasks Component =====
 const Tasks = {
+  name: 'Tasks',
   template: `
   <div class="glass-shell anim-fade-up">
     <div class="glass-core">
@@ -761,7 +824,12 @@ const Tasks = {
         <el-table-column type="index" label="序号" :width="selectionMode ? 80 : 60" />
         <el-table-column prop="name" label="好友" min-width="120" />
         <el-table-column prop="time" label="执行时间" width="100" />
+        <el-table-column label="随机延迟" width="110" align="center">
+          <template #default="{ row }">+0 ~ {{ row.jitter_minutes || 0 }} 分钟</template>
+        </el-table-column>
         <el-table-column prop="next_run" label="下次执行" min-width="160" />
+        <el-table-column prop="last_run_at" label="最近执行" min-width="160" />
+        <el-table-column prop="last_result" label="结果" min-width="150" />
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button type="warning" size="small" @click="openEditDialog(row)">修改时间</el-button>
@@ -774,7 +842,7 @@ const Tasks = {
         <el-form :model="taskForm" label-width="80px">
           <el-form-item label="好友"><el-select v-model="taskForm.name" placeholder="选择好友" filterable :disabled="dialogMode === 'edit'" style="width:100%"><el-option v-for="f in availableFriends" :key="f.name" :label="f.name" :value="f.name" /></el-select></el-form-item>
           <el-form-item label="执行时间"><el-time-picker v-model="taskForm.time" format="HH:mm" value-format="HH:mm" placeholder="选择时间" style="width:100%" /></el-form-item>
-          <el-form-item v-if="dialogMode === 'add'" label="消息内容"><el-input v-model="taskForm.text" type="textarea" :rows="3" placeholder="留空将使用每日名言" /></el-form-item>
+          <el-form-item v-if="dialogMode === 'add'" label="消息内容"><el-input v-model="taskForm.text" type="textarea" :rows="3" placeholder="留空使用全局模板池；多条模板可用 || 或换行分隔" /></el-form-item>
         </el-form>
         <template #footer><el-button @click="dialogVisible = false">取消</el-button><el-button type="primary" @click="handleSubmit" :loading="submitLoading">{{ dialogMode === 'add' ? '添加' : '修改' }}</el-button></template>
       </el-dialog>
@@ -836,6 +904,50 @@ const Settings = {
     </div>
     <div class="glass-shell anim-fade-up stagger-3">
       <div class="glass-core">
+        <div class="panel-title"><div class="panel-title-icon"><el-icon><component is="Warning" /></el-icon></div>风险状态</div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+          <el-tag :type="riskStatus.paused ? 'danger' : 'success'" effect="dark">{{ riskStatus.paused ? '自动任务已暂停' : '自动任务正常' }}</el-tag>
+          <span style="color:var(--text-secondary);font-size:13px">连续失败：{{ riskStatus.consecutive_failures || 0 }} / {{ riskStatus.max_consecutive_failures || 0 }}</span>
+          <span style="color:var(--text-secondary);font-size:13px">今日发送：{{ riskStatus.today_send_count || 0 }}</span>
+          <span style="color:var(--text-secondary);font-size:13px">最后成功：{{ riskStatus.last_success_at || '暂无' }}</span>
+        </div>
+        <div v-if="riskStatus.pause_reason" style="color:var(--danger);font-size:13px;line-height:1.7;margin-bottom:12px">{{ riskStatus.pause_reason }}</div>
+        <div v-else-if="riskStatus.last_error" style="color:var(--warning);font-size:13px;line-height:1.7;margin-bottom:12px">{{ riskStatus.last_error }}</div>
+        <div v-else style="color:var(--text-muted);font-size:13px;line-height:1.7;margin-bottom:12px">系统会自动记录最近发送结果；达到连续失败阈值后，会自动暂停所有定时任务。</div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <el-button :icon="ElementPlusIconsVue.Refresh" @click="fetchRiskStatus">刷新风控状态</el-button>
+          <el-button type="warning" :disabled="!riskStatus.paused" @click="handleResumeRisk" :loading="riskResumeLoading">恢复自动任务</el-button>
+        </div>
+      </div>
+    </div>
+    <div class="glass-shell anim-fade-up stagger-3">
+      <div class="glass-core">
+        <div class="panel-title"><div class="panel-title-icon"><el-icon><component is="MagicStick" /></el-icon></div>防封策略</div>
+        <el-form :model="riskConfig" label-width="120px">
+          <el-form-item label="随机延迟分钟">
+            <el-input-number v-model="riskConfig.task_jitter_minutes" :min="0" :max="60" />
+            <span style="color:var(--text-muted);font-size:12px;margin-left:10px">定时任务在触发后随机延迟 0~N 分钟执行</span>
+          </el-form-item>
+          <el-form-item label="熔断阈值">
+            <el-input-number v-model="riskConfig.max_consecutive_failures" :min="1" :max="10" />
+            <span style="color:var(--text-muted);font-size:12px;margin-left:10px">连续失败达到阈值后自动暂停任务</span>
+          </el-form-item>
+          <el-form-item label="去重天数">
+            <el-input-number v-model="riskConfig.dedupe_window_days" :min="1" :max="30" />
+            <span style="color:var(--text-muted);font-size:12px;margin-left:10px">同一好友在该时间窗内尽量避免重复消息</span>
+          </el-form-item>
+          <el-form-item label="消息模板池">
+            <el-input v-model="riskConfig.message_templates_text" type="textarea" :rows="6" placeholder="一行一个模板，或使用 || 分隔。留空会回退到默认模板。" />
+          </el-form-item>
+        </el-form>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <el-button type="primary" :icon="ElementPlusIconsVue.Check" @click="handleSaveRiskConfig" :loading="riskConfigLoading">保存策略</el-button>
+          <span style="color:var(--text-muted);font-size:12px">留空消息任务会优先从模板池中随机选取，并结合历史发送记录做去重</span>
+        </div>
+      </div>
+    </div>
+    <div class="glass-shell anim-fade-up stagger-3">
+      <div class="glass-core">
         <div class="panel-title"><div class="panel-title-icon"><el-icon><component is="Picture" /></el-icon></div>调试功能</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
           <el-button type="primary" :icon="ElementPlusIconsVue.Picture" @click="handleGetScreenshot" :loading="screenshotLoading">浏览器截图</el-button>
@@ -849,7 +961,7 @@ const Settings = {
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--glass-2);border-radius:var(--r-sm);border:1px solid var(--glass-border)">
             <span style="color:var(--text-secondary);font-size:13px">当前端口：</span>
-            <span style="color:var(--coral);font-size:15px;font-weight:700">{{ currentPort }}</span>
+            <span style="color:var(--accent);font-size:15px;font-weight:700">{{ currentPort }}</span>
           </div>
           <el-input v-model="portForm.new_port" placeholder="输入新端口" style="width:140px" @keyup.enter="handleSetPort" />
           <el-button type="primary" :icon="ElementPlusIconsVue.Check" @click="handleSetPort" :loading="portLoading">保存</el-button>
@@ -870,10 +982,35 @@ const Settings = {
         </div>
       </div>
     </div>
+    <div class="glass-shell anim-fade-up stagger-4">
+      <div class="glass-core">
+        <div class="panel-title"><div class="panel-title-icon"><el-icon><component is="Monitor" /></el-icon></div>浏览器内核</div>
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--glass-2);border-radius:var(--r-sm);border:1px solid var(--glass-border)">
+              <span style="color:var(--text-secondary);font-size:13px">当前浏览器：</span>
+              <span style="color:var(--accent);font-size:15px;font-weight:700">{{ browserLabelMap[browserConfig.browser_name] || browserConfig.browser_name }}</span>
+            </div>
+            <el-select v-model="browserConfig.browser_name" style="width:180px" :disabled="browserConfigLoading">
+              <el-option label="Microsoft Edge" value="edge" />
+              <el-option label="Google Chrome" value="chrome" />
+              <el-option label="Chromium" value="chromium" />
+              <el-option label="Brave" value="brave" />
+            </el-select>
+            <el-button type="primary" :icon="ElementPlusIconsVue.Check" @click="handleSetBrowserConfig" :loading="browserConfigLoading">保存浏览器</el-button>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <el-input v-model="browserConfig.browser_path" placeholder="可选：自定义浏览器路径，例如 /usr/bin/google-chrome 或 C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" />
+            <el-button @click="browserConfig.browser_path = ''" :disabled="browserConfigLoading">清空路径</el-button>
+          </div>
+          <span style="color:var(--text-muted);font-size:12px">Linux 推荐选择 Chrome 或 Chromium；留空时自动查找系统已安装浏览器，修改后需重启后端生效</span>
+        </div>
+      </div>
+    </div>
     <el-dialog v-model="manualDialogVisible" title="手动登录" width="500px" destroy-on-close append-to-body><el-form :model="manualForm" label-width="120px"><el-form-item label="Base64Cookie"><el-input v-model="manualForm.cookie" type="textarea" :rows="6" placeholder="请输入登录Base64Cookie" /></el-form-item></el-form><template #footer><el-button @click="manualDialogVisible = false">取消</el-button><el-button type="primary" @click="handleManualLogin" :loading="manualLoading">验证登录</el-button></template></el-dialog>
     <el-dialog v-model="cookieDialogVisible" title="获取Cookie" width="400px" destroy-on-close append-to-body><el-form :model="cookieForm" label-width="100px"><el-form-item label="确认密码"><el-input v-model="cookieForm.password" type="password" placeholder="请输入密码确认" @keyup.enter="handleGetCookie" /></el-form-item></el-form><template #footer><el-button @click="cookieDialogVisible = false">取消</el-button><el-button type="primary" @click="handleGetCookie" :loading="cookieLoading">获取Cookie</el-button></template></el-dialog>
     <el-dialog v-model="phoneDialogVisible" title="验证码登录" width="400px" destroy-on-close append-to-body><el-form :model="phoneForm" label-width="80px"><el-form-item label="手机号"><div style="display:flex;gap:8px"><el-input v-model="phoneForm.areacode" placeholder="+86" style="width:70px;flex-shrink:0" @keyup.enter="handleSendCode" /><el-input v-model="phoneForm.phone" placeholder="请输入手机号" style="flex:1" @keyup.enter="handleSendCode" /></div></el-form-item><el-form-item label="验证码"><div style="display:flex;gap:10px"><el-input v-model="phoneForm.code" placeholder="请输入验证码" style="flex:1" @keyup.enter="handlePhoneLogin" /><el-button @click="handleSendCode" :disabled="codeCountdown > 0" :loading="codeLoading">{{ codeCountdown > 0 ? codeCountdown + 's' : '发送验证码' }}</el-button></div></el-form-item></el-form><template #footer><el-button @click="phoneDialogVisible = false">取消</el-button><el-button type="primary" @click="handlePhoneLogin" :loading="phoneLoading">登录</el-button></template></el-dialog>
-    <el-dialog v-model="qrDialogVisible" title="抖音扫码登录" width="350px" destroy-on-close append-to-body><div style="display:flex;justify-content:center;align-items:center;min-height:300px"><div v-if="qrcodeUrl" style="text-align:center"><img :src="qrcodeUrl" alt="登录二维码" style="width:250px;height:250px;border:1px solid var(--glass-border);border-radius:var(--r-md);padding:8px;background:var(--bg-elevated);box-shadow:var(--shadow-glow-coral)" /><p style="margin-top:15px;color:var(--text-secondary);font-size:14px">请使用抖音App扫码登录</p></div><div v-else-if="loading" style="text-align:center;color:var(--text-muted)"><el-icon class="is-loading" style="font-size:48px;margin-bottom:10px"><component is="Loading" /></el-icon><p>正在加载二维码...</p></div></div><div style="display:flex;justify-content:center;gap:12px;margin-top:20px;padding-top:15px;border-top:1px solid var(--glass-border)"><el-button :icon="ElementPlusIconsVue.Refresh" @click="handleRefreshCode" :loading="refreshLoading" size="small">刷新验证码</el-button><el-button :icon="ElementPlusIconsVue.View" @click="handleCheckLogin" :loading="checkLoading" size="small">获取登录状态</el-button></div></el-dialog>
+    <el-dialog v-model="qrDialogVisible" title="抖音扫码登录" width="350px" destroy-on-close append-to-body><div style="display:flex;justify-content:center;align-items:center;min-height:300px"><div v-if="qrcodeUrl" style="text-align:center"><img :src="qrcodeUrl" alt="登录二维码" style="width:250px;height:250px;border:1px solid var(--glass-border);border-radius:var(--r-md);padding:8px;background:var(--bg-surface);box-shadow:var(--shadow-glow)" /><p style="margin-top:15px;color:var(--text-secondary);font-size:14px">请使用抖音App扫码登录</p></div><div v-else-if="loading" style="text-align:center;color:var(--text-muted)"><el-icon class="is-loading" style="font-size:48px;margin-bottom:10px"><component is="Loading" /></el-icon><p>正在加载二维码...</p></div></div><div style="display:flex;justify-content:center;gap:12px;margin-top:20px;padding-top:15px;border-top:1px solid var(--glass-border)"><el-button :icon="ElementPlusIconsVue.Refresh" @click="handleRefreshCode" :loading="refreshLoading" size="small">刷新验证码</el-button><el-button :icon="ElementPlusIconsVue.View" @click="handleCheckLogin" :loading="checkLoading" size="small">获取登录状态</el-button></div></el-dialog>
     <el-dialog v-model="passwordDialogVisible" title="修改密码" width="400px" destroy-on-close append-to-body><el-form :model="passwordForm" label-width="90px"><el-form-item label="原密码"><el-input v-model="passwordForm.old_password" type="password" placeholder="请输入原密码" show-password /></el-form-item><el-form-item label="新密码"><el-input v-model="passwordForm.new_password" type="password" placeholder="请输入新密码" show-password /></el-form-item></el-form><template #footer><el-button @click="passwordDialogVisible = false">取消</el-button><el-button type="primary" @click="handleChangePassword" :loading="passwordLoading">确认修改</el-button></template></el-dialog>
     <el-dialog v-model="screenshotPreviewVisible" title="浏览器截图" width="600px" destroy-on-close append-to-body><img :src="screenshotUrl" alt="浏览器截图" style="max-width:100%;max-height:70vh;display:block;margin:0 auto" /></el-dialog>
   </div>`,
@@ -890,6 +1027,17 @@ const Settings = {
     const phoneForm = ref({ areacode: '+86', phone: '', code: '' });
     const currentPort = ref(8080), portForm = ref({ new_port: '' }), portLoading = ref(false);
     const browserMode = ref(true), browserModeLoading = ref(false);
+    const browserConfigLoading = ref(false);
+    const browserConfig = reactive({ browser_name: 'edge', browser_path: '' });
+    const riskConfigLoading = ref(false), riskResumeLoading = ref(false);
+    const riskConfig = reactive({ task_jitter_minutes: 8, max_consecutive_failures: 3, dedupe_window_days: 7, message_templates_text: '' });
+    const riskStatus = reactive({ paused: false, pause_reason: '', consecutive_failures: 0, max_consecutive_failures: 0, today_send_count: 0, last_error: '', last_success_at: '' });
+    const browserLabelMap = {
+      edge: 'Microsoft Edge',
+      chrome: 'Google Chrome',
+      chromium: 'Chromium',
+      brave: 'Brave'
+    };
 
     const fetchLastLoginIP = async () => { try { const res = await API.getLastLoginIP(); if (res.code == 200) { lastLoginIP.value = res.data || '无'; localStorage.setItem('douyin_last_login_ip', lastLoginIP.value); } } catch (e) { lastLoginIP.value = '获取失败'; } };
     const fetchUsername = async () => { try { const res = await API.getUsername(); if (res.code == 200 && res.data) { const nick = res.data.nickname || ''; const av = res.data.avatar || ''; username.value = nick; usernameLoaded.value = true; setDouyinUser(nick, av); localStorage.setItem('douyin_username_loaded', '1'); } } catch (e) {} };
@@ -897,8 +1045,8 @@ const Settings = {
     const checkLoginStatus = async (force = false) => { const now = Date.now(); if (!force && now - _lastLoginCheckSetting < 30000) return; _lastLoginCheckSetting = now; try { const res = await API.getLoginStatus(); loginStatus.value = res.data === 'Yes'; setLoginStatus(loginStatus.value); if (loginStatus.value && !usernameLoaded.value) await fetchUsername(); } catch (e) { loginStatus.value = false; setLoginStatus(false); } };
     const handleRefreshStatus = async () => { refreshStatusLoading.value = true; try { usernameLoaded.value = false; setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); await checkLoginStatus(true); await fetchLastLoginIP(); ElMessage.success(loginStatus.value ? '已登录' : '未登录'); } finally { refreshStatusLoading.value = false; } };
     const fetchFriendsList = async () => { try { const res = await API.getFriendsList(); if (res.code === 200) { const list = res.data.list || {}; setFriendsList(Object.entries(list).map(([name, [avatar, fire]]) => ({ name, avatar, fire }))); } } catch (e) {} };
-    const handleCheckLogin = async () => { checkLoading.value = true; try { const res = await API.pnglogin(); loginStatus.value = res.code == 200; setLoginStatus(loginStatus.value); if (loginStatus.value) { ElMessage.success('登录成功'); qrDialogVisible.value = false; username.value = ''; usernameLoaded.value = false; setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); await fetchUsername(); await fetchFriendsList(); } else ElMessage.warning('未登录，请继续扫码'); } catch (e) { ElMessage.error('扫码登录失败，请重试'); } finally { checkLoading.value = false; } };
-    const handleRefreshCode = async () => { refreshLoading.value = true; try { await API.initBrowser(); const res = await API.getLoginPng(); if (res.data) { qrcodeUrl.value = res.data; qrDialogVisible.value = true; ElMessage.success('刷新成功'); } else ElMessage.error('获取二维码失败'); } catch (e) { ElMessage.error('刷新失败，请确保浏览器已初始化'); } finally { refreshLoading.value = false; } };
+    const handleCheckLogin = async () => { checkLoading.value = true; try { const res = await API.pnglogin(); loginStatus.value = res.code == 200; setLoginStatus(loginStatus.value); if (loginStatus.value) { stopQrPoll(); ElMessage.success('登录成功'); qrDialogVisible.value = false; username.value = ''; usernameLoaded.value = false; setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); await fetchUsername(); await fetchFriendsList(); } else ElMessage.warning('未登录，请继续扫码'); } catch (e) { ElMessage.error('扫码登录失败，请重试'); } finally { checkLoading.value = false; } };
+    const handleRefreshCode = async () => { refreshLoading.value = true; try { await API.initBrowser(); const res = await API.getLoginPng(); if (res.data) { qrcodeUrl.value = res.data; qrDialogVisible.value = true; ElMessage.success('刷新成功'); startQrPoll(); } else ElMessage.error('获取二维码失败'); } catch (e) { ElMessage.error('刷新失败，请确保浏览器已初始化'); } finally { refreshLoading.value = false; } };
     const handleManualLogin = async () => { if (!manualForm.value.cookie.trim()) { ElMessage.warning('请输入Base64Cookie'); return; } manualLoading.value = true; try { const res = await API.login(manualForm.value.cookie); if (res.data === 'ok') { ElMessage.success('登录成功'); loginStatus.value = true; setLoginStatus(true); manualDialogVisible.value = false; username.value = ''; usernameLoaded.value = false; setDouyinUser('', ''); localStorage.removeItem('douyin_username_loaded'); await fetchUsername(); await fetchFriendsList(); } else ElMessage.error('登录失败，Cookie无效'); } catch (e) { ElMessage.error('登录失败，请检查Cookie'); } finally { manualLoading.value = false; } };
     const handleChangePassword = async () => { if (!passwordForm.value.old_password) { ElMessage.warning('请输入原密码'); return; } if (!passwordForm.value.new_password) { ElMessage.warning('请输入新密码'); return; } if (passwordForm.value.old_password === passwordForm.value.new_password) { ElMessage.warning('新密码不能与原密码相同'); return; } passwordLoading.value = true; try { const res = await API.changePassword(passwordForm.value.old_password, passwordForm.value.new_password); if (res.code == 200) { ElMessage.success('密码修改成功'); passwordDialogVisible.value = false; passwordForm.value.old_password = ''; passwordForm.value.new_password = ''; } else ElMessage.error(res.data || '修改失败'); } catch (e) { ElMessage.error('修改失败'); } finally { passwordLoading.value = false; } };
     const handleGetCookie = async () => { if (!cookieForm.value.password) { ElMessage.warning('请输入密码'); return; } cookieLoading.value = true; try { const res = await API.getCooker(cookieForm.value.password); if (res.code == 200) { const ta = document.createElement('textarea'); ta.value = res.data.cooke; ta.style.position = 'fixed'; ta.style.left = '-9999px'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); ElMessage.success('Cookie已复制到剪贴板'); cookieDialogVisible.value = false; cookieForm.value.password = ''; } catch { ElMessage.error('复制失败'); } finally { document.body.removeChild(ta); } } else ElMessage.error(res.data || '获取失败，密码错误'); } catch (e) { ElMessage.error('获取失败'); } finally { cookieLoading.value = false; } };
@@ -918,12 +1066,87 @@ const Settings = {
     const handleSetPort = async () => { const p = parseInt(portForm.value.new_port); if (!p) { ElMessage.warning('请输入端口号'); return; } if (p < 1 || p > 65535) { ElMessage.warning('端口范围 1-65535'); return; } portLoading.value = true; try { const res = await API.setPort(p); if (res.code == 200) { ElMessage.success(res.data || '保存成功，重启后端后生效'); currentPort.value = p; portForm.value.new_port = ''; } else ElMessage.error(res.data || '保存失败'); } catch (e) { ElMessage.error('保存失败'); } finally { portLoading.value = false; } };
     const fetchBrowserMode = async () => { try { const res = await API.getBrowserMode(); if (res.code == 200) browserMode.value = res.data; } catch (e) {} };
     const handleSetBrowserMode = async () => { browserModeLoading.value = true; try { const res = await API.setBrowserMode(browserMode.value); if (res.code == 200) ElMessage.success(res.data || '保存成功，重启后端后生效'); else { ElMessage.error(res.data || '保存失败'); browserMode.value = !browserMode.value; } } catch (e) { ElMessage.error('保存失败'); browserMode.value = !browserMode.value; } finally { browserModeLoading.value = false; } };
-    const handleLogin = async () => { loginLoading.value = true; loading.value = true; qrcodeUrl.value = ''; qrDialogVisible.value = true; try { await API.initBrowser(); const res = await API.getLoginPng(); if (res.data) { qrcodeUrl.value = res.data; ElMessage.success('请使用抖音App扫码登录'); } else { ElMessage.error('获取二维码失败'); qrDialogVisible.value = false; } } catch (e) { ElMessage.error('登录初始化失败，请确保浏览器已启动'); qrDialogVisible.value = false; } finally { loginLoading.value = false; loading.value = false; } };
+    const fetchBrowserConfig = async () => { try { const res = await API.getBrowserConfig(); if (res.code == 200 && res.data) { browserConfig.browser_name = res.data.browser_name || 'edge'; browserConfig.browser_path = res.data.browser_path || ''; } } catch (e) {} };
+    const fetchRiskConfig = async () => {
+      try {
+        const res = await API.getRiskConfig();
+        if (res.code == 200 && res.data) {
+          riskConfig.task_jitter_minutes = res.data.task_jitter_minutes ?? 8;
+          riskConfig.max_consecutive_failures = res.data.max_consecutive_failures ?? 3;
+          riskConfig.dedupe_window_days = res.data.dedupe_window_days ?? 7;
+          riskConfig.message_templates_text = (res.data.message_templates || []).join('\n');
+        }
+      } catch (e) {}
+    };
+    const fetchRiskStatus = async () => { try { const res = await API.getRiskStatus(); if (res.code == 200 && res.data) Object.assign(riskStatus, res.data); } catch (e) {} };
+    const handleSetBrowserConfig = async () => {
+      browserConfigLoading.value = true;
+      try {
+        const res = await API.setBrowserConfig(browserConfig.browser_name, browserConfig.browser_path.trim());
+        if (res.code == 200) ElMessage.success(res.data || '保存成功，重启后端后生效');
+        else ElMessage.error(res.data || '保存失败');
+      } catch (e) {
+        ElMessage.error('保存失败');
+      } finally {
+        browserConfigLoading.value = false;
+      }
+    };
+    const handleSaveRiskConfig = async () => {
+      riskConfigLoading.value = true;
+      try {
+        const payload = {
+          task_jitter_minutes: riskConfig.task_jitter_minutes,
+          max_consecutive_failures: riskConfig.max_consecutive_failures,
+          dedupe_window_days: riskConfig.dedupe_window_days,
+          message_templates: riskConfig.message_templates_text
+        };
+        const res = await API.setRiskConfig(payload);
+        if (res.code == 200) { ElMessage.success(res.data || '保存成功'); await fetchRiskStatus(); }
+        else ElMessage.error(res.data || '保存失败');
+      } catch (e) {
+        ElMessage.error('保存失败');
+      } finally {
+        riskConfigLoading.value = false;
+      }
+    };
+    const handleResumeRisk = async () => {
+      riskResumeLoading.value = true;
+      try {
+        const res = await API.resumeRisk();
+        if (res.code == 200) { ElMessage.success(res.data || '已恢复'); await fetchRiskStatus(); }
+        else ElMessage.error(res.data || '恢复失败');
+      } catch (e) {
+        ElMessage.error('恢复失败');
+      } finally {
+        riskResumeLoading.value = false;
+      }
+    };
+    let qrPollTimer = null;
+    const stopQrPoll = () => { if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null; } };
+    const startQrPoll = () => {
+      stopQrPoll();
+      qrPollTimer = setInterval(async () => {
+        try {
+          const res = await API.pnglogin();
+          if (res.code == 200) {
+            loginStatus.value = true; setLoginStatus(true);
+            qrDialogVisible.value = false; stopQrPoll();
+            ElMessage.success('扫码登录成功');
+            username.value = ''; usernameLoaded.value = false; setDouyinUser('', '');
+            localStorage.removeItem('douyin_username_loaded');
+            await fetchUsername(); await fetchFriendsList();
+          }
+        } catch (e) {}
+      }, 3000);
+    };
+    watch(qrDialogVisible, (v) => { if (!v) stopQrPoll(); });
+    const handleLogin = async () => { loginLoading.value = true; loading.value = true; qrcodeUrl.value = ''; qrDialogVisible.value = true; try { await API.initBrowser(); const res = await API.getLoginPng(); if (res.data) { qrcodeUrl.value = res.data; ElMessage.success('请使用抖音App扫码登录'); startQrPoll(); } else { ElMessage.error('获取二维码失败'); qrDialogVisible.value = false; } } catch (e) { ElMessage.error('登录初始化失败，请确保浏览器已启动'); qrDialogVisible.value = false; } finally { loginLoading.value = false; loading.value = false; } };
 
-    onMounted(async () => { if (!settingsLoaded.value) { await checkLoginStatus(); await fetchLastLoginIP(); localStorage.setItem('douyin_settings_loaded', '1'); } await fetchPort(); await fetchBrowserMode(); });
-    onActivated(async () => { lastLoginIP.value = localStorage.getItem('douyin_last_login_ip') || '加载中...'; });
+    onMounted(async () => { if (!settingsLoaded.value) { await checkLoginStatus(); await fetchLastLoginIP(); localStorage.setItem('douyin_settings_loaded', '1'); } await fetchPort(); await fetchBrowserMode(); await fetchBrowserConfig(); await fetchRiskConfig(); await fetchRiskStatus(); });
+    onUnmounted(() => { stopQrPoll(); });
+    onActivated(async () => { lastLoginIP.value = localStorage.getItem('douyin_last_login_ip') || '加载中...'; await fetchRiskStatus(); });
 
-    return { loginLoading, refreshLoading, checkLoading, refreshStatusLoading, qrDialogVisible, qrcodeUrl, loading, manualDialogVisible, manualLoading, manualForm, username, passwordDialogVisible, passwordLoading, passwordForm, lastLoginIP, cookieDialogVisible, cookieLoading, cookieForm, screenshotLoading, screenshotUrl, screenshotPreviewVisible, phoneDialogVisible, phoneLoading, codeLoading, codeCountdown, phoneForm, currentPort, portForm, portLoading, browserMode, browserModeLoading, handleSetBrowserMode, handleLogin, handleRefreshStatus, handleCheckLogin, handleRefreshCode, handleManualLogin, handleChangePassword, handleGetCookie, handleDieLogin, handleSendCode, handlePhoneLogin, handleGetScreenshot, handleForceLogin, handleSetPort, loginStatus, ElementPlusIconsVue };
+    return { loginLoading, refreshLoading, checkLoading, refreshStatusLoading, qrDialogVisible, qrcodeUrl, loading, manualDialogVisible, manualLoading, manualForm, username, passwordDialogVisible, passwordLoading, passwordForm, lastLoginIP, cookieDialogVisible, cookieLoading, cookieForm, screenshotLoading, screenshotUrl, screenshotPreviewVisible, phoneDialogVisible, phoneLoading, codeLoading, codeCountdown, phoneForm, currentPort, portForm, portLoading, browserMode, browserModeLoading, browserConfigLoading, browserConfig, riskConfigLoading, riskResumeLoading, riskConfig, riskStatus, browserLabelMap, fetchRiskStatus, handleSaveRiskConfig, handleResumeRisk, handleSetBrowserMode, handleSetBrowserConfig, handleLogin, handleRefreshStatus, handleCheckLogin, handleRefreshCode, handleManualLogin, handleChangePassword, handleGetCookie, handleDieLogin, handleSendCode, handlePhoneLogin, handleGetScreenshot, handleForceLogin, handleSetPort, loginStatus, ElementPlusIconsVue };
   }
 };
 
@@ -971,5 +1194,5 @@ try {
   console.log('App started');
 } catch (e) {
   console.error('App init error:', e);
-  document.body.innerHTML = '<div style="color:#dc2626;padding:40px;font-family:monospace;background:#f5f4f1;min-height:100vh"><h2>应用初始化失败</h2><pre style="white-space:pre-wrap">' + e.message + '\n\n' + (e.stack || '') + '</pre></div>';
+  document.body.innerHTML = '<div style="color:#ef4444;padding:40px;font-family:monospace;background:#f5f4f1;min-height:100vh"><h2>应用初始化失败</h2><pre style="white-space:pre-wrap">' + e.message + '\n\n' + (e.stack || '') + '</pre></div>';
 }
