@@ -1,26 +1,29 @@
-# 用户配置（含本地端口设置）
-config.json
-tasks.json
+# ===== 运行时数据（含敏感信息，绝不上传） =====
+# data/ 整个目录排除：config.json 含密码 hash，risk_state.json 含发送记录，tasks.json 含好友名
+data/
 
-# Edge 浏览器用户数据
+# ===== 浏览器用户数据（含登录 Cookie、浏览历史，绝不上传） =====
 edge_user_data/
+*_user_data/
 
-# IDE
+# ===== 日志文件 =====
+logs/
+
+# ===== 第三方前端库 =====
+# 本地托管的 Vue/Element Plus/Axios 等开源库（约 1.6MB）
+# 必须上传！否则其他用户下载后前端会白屏
+# 如需排除（例如用 LFS 管理），取消下面这行的注释：
+# dist/lib/
+
+# ===== 开发笔记（个人记录，按需保留） =====
+docs/
+
+# ===== IDE =====
 .idea/
 .vscode/
 
-dist/lib/
+# ===== Python 缓存 =====
+__pycache__/
+*.pyc
+*.pyo
 
-/浏览器内核技改方案.md
-
-/HQ.txt
-
-/fix.txt
-
-/debug-chat-sticker-sync.md
-
-/.dbg/
-
-/risk_state.json
-
-/__pycache__
