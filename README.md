@@ -2,7 +2,6 @@
 
 抖音好友火花自动续期工具，零构建一键启动，基于 Vue 3 + Element Plus + FastAPI 构建，提供扫码登录、好友管理、定时续火花等可视化管理功能。
 
-
 ---
 
 ## 法律声明
@@ -25,8 +24,8 @@
 
 ### 账户管理
 - 扫码登录（抖音 App 扫码授权）
-- 手机号登录
-- 手动登录（Base64 Cookie 方式）
+- 手机号验证码登录
+- Cookie 导入登录（Base64 格式）
 - Cookie 一键导出
 - 登录状态实时检测
 - 上次登录 IP 记录
@@ -36,27 +35,35 @@
 - 好友列表展示（头像、火花天数）
 - 好友搜索过滤
 - 实时刷新好友数据
-- 一键发送消息
 
 ### 聊天对话
 - 类抖音原生聊天界面（气泡式消息展示）
 - 查看好友聊天记录
-- 直接发送文字消息
-- 支持发送抖音内置表情包（通过 Selenium 自动化操作表情面板）
+- 发送文字消息
+- 发送抖音内置表情包（分类 tab 切换，与抖音布局一致）
 - 左侧好友列表 + 右侧对话窗口的双栏布局
 
 ### 定时任务
 - 为好友创建每日定时发送任务
-- 支持自定义消息内容（留空使用每日名言）
+- 支持自定义消息内容（留空使用全局模板池或每日名言）
 - 修改已有任务执行时间
 - 删除定时任务
-- 最近任务快捷入口
+- 任务执行结果与最近消息记录
 
 ### 首页看板
 - 浏览器 / 登录状态监测
 - 好友数量 / 定时任务数量统计
 - 快速操作入口
 - 系统运行信息（版本、在线时长、后端地址）
+
+### 设置与风控
+- 端口配置、浏览器类型与路径切换
+- 浏览器显隐模式切换
+- 消息模板池自定义
+- 定时任务随机延迟（模拟真人）
+- 消息去重窗口
+- 连续失败自动熔断暂停
+- 今日发送次数与最近消息记录
 
 ---
 
@@ -80,26 +87,38 @@
 
 ```
 taktok/
-├── dist/                        # 前端页面（已构建，直接可运行）
-│   ├── index.html              # 主页面（含完整 CSS 样式系统）
-│   ├── app.js                  # Vue 应用（6 个组件 + API 封装）
-│   └── lib/                    # 本地化第三方库
+├── 抖音自动续火花-后端.py        # 服务主入口（FastAPI 路由 + 启动逻辑）
+├── backend/                      # 后端模块包
+│   ├── config.py                 # 配置读写、浏览器名映射、端口工具
+│   ├── runtime.py                # 运行时全局状态（driver/douyin/init 等）
+│   ├── utils.py                  # 通用工具（时间格式化、调试日志、数据类）
+│   ├── browser_manager.py        # 浏览器驱动管理（创建/检查/清理）
+│   ├── risk_control.py           # 风控状态机、消息去重与选择
+│   ├── auth.py                   # 密码哈希、token 管理、鉴权依赖
+│   ├── douyin_core.py            # Douyin 核心类（好友/聊天/登录）
+│   ├── douyin_sticker.py         # 表情包操作 Mixin（面板/收集/切换/发送）
+│   └── scheduler.py              # 定时任务持久化与调度
+├── dist/                         # 前端页面（已构建，直接可运行）
+│   ├── index.html                # 主页面（含完整 CSS 样式系统）
+│   ├── app.js                    # Vue 应用（组件 + API 封装）
+│   └── lib/                      # 本地化第三方库
 │       ├── vue.global.prod.min.js
 │       ├── vue-router.global.prod.min.js
 │       ├── element-plus.min.js
 │       ├── element-plus-icons.min.js
 │       ├── element-plus.css
 │       └── axios.min.js
-├── 抖音自动续火花-后端.py        # 后端服务（FastAPI + Selenium）
-├── config.json                  # 端口配置（运行后自动生成）
-├── tasks.json                   # 定时任务持久化（运行后自动生成）
-├── edge_user_data/              # Edge 浏览器用户数据（运行后自动生成）
-├── chrome_user_data/            # Chrome 浏览器用户数据（按需生成）
-├── chromium_user_data/          # Chromium 浏览器用户数据（按需生成）
-├── brave_user_data/             # Brave 浏览器用户数据（按需生成）
-├── requirements.txt             # Python 依赖清单
-├── LICENSE.txt                  # MIT（使用后果自负，详见免责声明）
-└── README.md
+├── data/                         # 运行时数据（运行后自动生成，不上传 Git）
+│   ├── config.json               # 配置（端口、浏览器、密码 hash、模板池）
+│   ├── tasks.json                # 定时任务持久化
+│   └── risk_state.json           # 风控状态（发送记录、失败计数）
+├── logs/                         # 调试日志（不上传 Git）
+├── docs/                         # 技术文档
+│   └── 浏览器内核技改方案.md      # 浏览器内核技改方案
+├── edge_user_data/               # Edge 浏览器用户数据（运行后自动生成，不上传 Git）
+├── README.md
+├── LICENSE.txt
+└── .gitignore
 ```
 
 ---
@@ -109,21 +128,14 @@ taktok/
 ### 环境要求
 
 - **Python 3.8+**
-- **任一受支持浏览器**：Microsoft Edge / Google Chrome / Chromium / Brave
+- **任一受支持浏览器**：Microsoft Edge（推荐） / Google Chrome / Chromium / Brave
 - Windows / Linux
 
 ### 安装依赖
 
 ```bash
-pip install -r requirements.txt
+pip install fastapi uvicorn selenium schedule requests
 ```
-
-依赖清单：
-- fastapi
-- uvicorn
-- selenium >= 4.10（内置 Selenium Manager，自动下载驱动）
-- schedule
-- requests
 
 ### 启动服务
 
@@ -132,10 +144,10 @@ python 抖音自动续火花-后端.py
 ```
 
 启动后直接输出访问地址，无需任何交互：
-- 默认显示浏览器窗口（无头模式易崩溃）
-- 端口从 `config.json` 读取（默认 8080），被占用时自动切换到可用端口
+- 默认使用 Edge 浏览器并显示窗口（无头模式易崩溃）
+- 端口从 `data/config.json` 读取（默认 8080），被占用时自动切换到可用端口
 
-启动后访问控制台输出的地址即可使用。
+访问控制台输出的地址即可使用。
 
 ### Linux 运行说明
 
@@ -168,39 +180,45 @@ python 抖音自动续火花-后端.py
 | `/friends` | 好友列表 | 查看好友、发送消息 |
 | `/chat` | 聊天 | 气泡式对话界面、发送表情包 |
 | `/tasks` | 定时任务 | 添加 / 修改 / 删除任务 |
-| `/settings` | 设置 | 登录管理、密码修改、端口配置 |
+| `/settings` | 设置 | 登录管理、密码修改、端口配置、风控参数 |
 
 ---
 
-## 端口配置
+## 配置说明
 
-端口信息保存在 `config.json`：
+所有配置保存在 `data/config.json`（首次运行自动生成）：
 
 ```json
 {
   "port": 8080,
   "show_browser": true,
-  "browser_name": "chrome",
+  "browser_name": "edge",
   "browser_path": "",
+  "password_hash": "<SHA-256>",
   "task_jitter_minutes": 8,
   "max_consecutive_failures": 3,
   "dedupe_window_days": 7,
   "message_templates": [
     "今天也要开心呀",
-    "来给你续一下小火花"
+    "来给你续一下小火花",
+    "保持联系，火花不能断"
   ]
 }
 ```
 
-- 启动时自动读取，被占用时自动切换到可用端口
-- 在「设置」页可修改端口和浏览器显示模式，**重启后端后生效**
-- `browser_name` 支持 `edge` / `chrome` / `chromium` / `brave`
-- `browser_path` 留空时自动查找系统浏览器，填写后优先使用自定义路径
-- `task_jitter_minutes` 为定时任务触发后的随机延迟分钟数
-- `max_consecutive_failures` 为自动熔断阈值，连续失败达到该值后会暂停所有定时任务
-- `dedupe_window_days` 为消息去重时间窗，尽量避免在该时间内给同一好友重复发送相同内容
-- `message_templates` 为全局模板池；留空消息时会从模板池和每日名言中优先选择未重复内容
-- 各浏览器会使用独立的 `*_user_data/` 目录保存用户数据，保持浏览器指纹一致，避免每次启动被视为新设备
+| 字段 | 说明 |
+|------|------|
+| `port` | 服务端口，启动时被占用则自动切换 |
+| `show_browser` | 是否显示浏览器窗口（有头模式更稳定） |
+| `browser_name` | 浏览器类型：`edge` / `chrome` / `chromium` / `brave` |
+| `browser_path` | 浏览器可执行文件路径，留空使用系统默认 |
+| `password_hash` | 管理员密码 SHA-256 哈希（不存明文） |
+| `task_jitter_minutes` | 定时任务触发后的随机延迟分钟数（0~N） |
+| `max_consecutive_failures` | 连续失败达到该值后自动暂停所有定时任务 |
+| `dedupe_window_days` | 消息去重时间窗，天数内不对同一好友发送相同内容 |
+| `message_templates` | 全局模板池，留空消息时优先选择未重复内容 |
+
+> 在「设置」页修改端口、浏览器模式或浏览器类型后，**重启后端**生效。
 
 ---
 
@@ -218,7 +236,7 @@ python 抖音自动续火花-后端.py
 ### 用户操作建议
 
 - 定时任务建议设置在正常作息时段（如 20:00-23:00），避免凌晨自动发送
-- 如果需要自定义消息，建议配置 3 条以上模板并用换行或 `||` 分隔，而不是长期固定一句话
+- 如需自定义消息，建议配置 3 条以上模板并用换行或 `||` 分隔，避免长期固定一句话
 - 不要同时登录多个设备操作同一账号
 - 保持网络环境稳定，不要频繁切换 IP
 - 仅用于续火花，不要频繁手动发送消息
@@ -241,20 +259,47 @@ python 抖音自动续火花-后端.py
 - 控制台会打印实际使用的端口
 
 ### 定时任务丢失
-- 定时任务会自动持久化到 `tasks.json`，重启后端并初始化浏览器后会自动恢复
+- 定时任务自动持久化到 `data/tasks.json`，重启后端并初始化浏览器后自动恢复
 
 ### 自动任务被暂停
 - 当连续发送失败达到阈值时，系统会自动暂停所有定时任务
 - 可在「设置」页查看失败原因、今日发送次数和最近风险状态
 - 处理完异常后，点击「恢复自动任务」即可继续运行
 
+### 表情包发送失败
+- 确保已进入聊天页面（先点击好友打开对话）
+- 表情包面板需要页面完全加载后才能正常打开，如果失败请稍后重试
+
 ---
 
 ## 安全说明
 
-- 密码以 SHA-256 hash 形式存储在 `config.json` 中，不保存明文
+- 密码以 SHA-256 hash 形式存储在 `data/config.json` 中，不保存明文
 - 首次启动后请及时在「设置」页修改默认密码 `123456`
-- CORS 仅允许本地来源访问，防止跨域攻击
+- CORS 仅允许本地来源（localhost / 127.0.0.1）访问
 - 「强制登录」调试接口需二次密码确认
+- `data/` 目录已在 `.gitignore` 中排除，不会上传到 Git 仓库
 
 ---
+
+## 后端模块架构
+
+```
+抖音自动续火花-后端.py  (主入口)
+  ├── backend/config.py          配置与常量
+  ├── backend/runtime.py         运行时全局状态
+  ├── backend/utils.py           通用工具
+  ├── backend/browser_manager.py 浏览器驱动管理
+  ├── backend/risk_control.py    风控与消息选择
+  ├── backend/auth.py            认证鉴权
+  ├── backend/douyin_core.py     Douyin 核心类 → 继承 StickerMixin
+  │   ├── 好友管理（列表/搜索/打开对话）
+  │   ├── 聊天操作（发送文字/获取历史）
+  │   └── 登录初始化
+  ├── backend/douyin_sticker.py  StickerMixin → 表情包操作
+  │   ├── 打开表情面板
+  │   ├── 收集分类表情包
+  │   ├── 切换表情 tab
+  │   └── 按 src 精准点击表情
+  └── backend/scheduler.py       定时任务调度
+```
